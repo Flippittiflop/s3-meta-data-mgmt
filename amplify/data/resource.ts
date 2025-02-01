@@ -13,14 +13,12 @@ const schema = a.schema({
       }).authorization((allow) => [allow.publicApiKey()]),
 
   Template: a.model({
-    templateId: a.id().required(),
     name: a.string(),
     fields: a.string(), // JSON string of field definitions
     categories: a.hasMany('Category', 'templateId'),
   }).authorization((allow) => [allow.publicApiKey()]),
 
   Category: a.model({
-    categoryId: a.id().required(),
     name: a.string(),
     templateId: a.id(),
     template: a.belongsTo('Template', 'templateId'),
@@ -28,7 +26,6 @@ const schema = a.schema({
   }).authorization((allow) => [allow.publicApiKey()]),
 
   Image: a.model({
-    imageId: a.id().required(),
     s3Key: a.string(),
     s3Url: a.string(),
     categoryId: a.id(),
