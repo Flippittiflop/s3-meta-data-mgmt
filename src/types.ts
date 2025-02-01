@@ -1,7 +1,7 @@
 export interface Template {
   id: string;
   name: string;
-  fields: Record<string, any>;
+  fields: string; // Changed from Record<string, any> to string since we store it as JSON
 }
 
 export interface Category {
@@ -15,12 +15,12 @@ export interface Image {
   s3Key: string;
   s3Url: string;
   categoryId: string;
-  metadata: Record<string, any>;
+  metadata: string; // Changed to string since we store it as JSON
 }
 
 export interface TemplateField {
   name: string;
-  type: 'text' | 'number' | 'date' | 'select';
+  type: 'text' | 'number' | 'date' | 'select' | 'group';
   options?: string[];
   fields?: TemplateField[];
 }
