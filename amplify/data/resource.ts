@@ -13,20 +13,26 @@ const schema = a.schema({
       }).authorization((allow) => [allow.publicApiKey()]),
 
   Template: a.model({
+    templateId: a.id().required(),
     name: a.string(),
     fields: a.string(), // JSON string of field definitions
-    categoryId: a.hasMany('Category', 'templateId'),
+    categories: a.hasMany('Category', 'templateId'),
   }).authorization((allow) => [allow.publicApiKey()]),
 
   Category: a.model({
+    categoryId: a.id().required(),
     name: a.string(),
-    templateId: a.hasOne('Template', 'categoryId'),
+    templateId: a.id(),
+    template: a.belongsTo('Template', 'templateId'),
+    images: a.hasMany('Image', 'categoryId'),
   }).authorization((allow) => [allow.publicApiKey()]),
 
   Image: a.model({
+    imageId: a.id().required(),
     s3Key: a.string(),
     s3Url: a.string(),
-    categoryId: a.hasOne('Category', 'imageId'),
+    categoryId: a.id(),
+    category: a.belongsTo('Category', 'categoryId'),
     metadata: a.string(), // JSON string of metadata values
   }).authorization((allow) => [allow.publicApiKey()]),
 });
