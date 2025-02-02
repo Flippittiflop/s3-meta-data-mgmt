@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { Container, Title, Button, Card, TextInput, Stack, Group, Select, ActionIcon } from '@mantine/core';
+import { Title, Button, TextInput, Stack, Group, Select, ActionIcon } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
-import { IconPlus, IconTrash } from '@tabler/icons-react';
+import { IconPlus, IconTrash, IconEdit, IconDeviceFloppy } from '@tabler/icons-react';
 import type { Schema } from '../../amplify/data/resource';
 import type { Template, TemplateField } from '../types';
 
@@ -19,25 +19,7 @@ const FIELD_TYPES = [
 
 export default function Templates() {
   const [templates, setTemplates] = useState<Template[]>([]);
-
-  useEffect(() => {
-    loadTemplates();
-  }, []);
-
-  const loadTemplates = async () => {
-    try {
-      const result = await client.models.Template.list();
-      if (!result.data) return;
-      
-      setTemplates(result.data.map(template => ({
-        id: template.id,
-        name: template.name || '',
-        fields: template.fields || '[]'
-      })));
-    } catch (error) {
-      console.error('Error loading templates:', error);
-    }
-  };
+  const [editingId, setEditingId] = useState<string | null>(null);
 
   const form = useForm({
     initialValues: {
@@ -48,6 +30,43 @@ export default function Templates() {
       name: (value) => (!value ? 'Template name is required' : null),
     },
   });
+
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  const loadTemplates = async () => {
+    try {
+      const result = await client.models.Template.list();
+      if (!result.data) return;
+
+      setTemplates(result.data.map(template => ({
+        id: template.id,
+        name: template.name || '',
+        fields: template.fields || '[]'
+      })));
+    } catch (error) {
+      console.error('Error loading templates:', error);
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to load templates',
+        color: 'red',
+      });
+    }
+  };
+
+  const startEditing = (template: Template) => {
+    setEditingId(template.id);
+    form.setValues({
+      name: template.name,
+      fields: JSON.parse(template.fields),
+    });
+  };
+
+  const cancelEditing = () => {
+    setEditingId(null);
+    form.reset();
+  };
 
   const addField = (path: string = 'fields') => {
     form.insertListItem(path, {
@@ -64,138 +83,186 @@ export default function Templates() {
 
   const renderFields = (fields: TemplateField[], path: string = 'fields') => {
     return fields.map((field, index) => (
-      <Card key={index} withBorder p="sm" mb="sm">
-        <Group align="flex-start">
-          <TextInput
-            label="Field Name"
-            placeholder="Enter field name"
-            required
-            style={{ flex: 1 }}
-            {...form.getInputProps(`${path}.${index}.name`)}
-          />
-          <Select
-            label="Field Type"
-            data={FIELD_TYPES}
-            required
-            style={{ width: 120 }}
-            {...form.getInputProps(`${path}.${index}.type`)}
-          />
-          <ActionIcon
-            color="red"
-            variant="subtle"
-            onClick={() => removeField(path, index)}
-            mt={28}
-          >
-            <IconTrash size={16} />
-          </ActionIcon>
-        </Group>
-
-        {field.type === 'select' && (
-          <TextInput
-            label="Options (comma-separated)"
-            placeholder="Option1, Option2, Option3"
-            mt="sm"
-            onChange={(event) => {
-              const options = event.currentTarget.value.split(',').map(opt => opt.trim());
-              form.setFieldValue(`${path}.${index}.options`, options);
-            }}
-          />
-        )}
-
-        {field.type === 'group' && (
-          <Stack mt="sm">
-            <Button
-              leftSection={<IconPlus size={14} />}
-              variant="light"
-              size="xs"
-              onClick={() => addField(`${path}.${index}.fields`)}
+        <div key={index} style={{
+          padding: '1rem',
+          marginBottom: '1rem',
+          border: '1px solid #eee',
+          borderRadius: '8px',
+          backgroundColor: 'white'
+        }}>
+          <Group align="flex-start">
+            <TextInput
+                label="Field Name"
+                placeholder="Enter field name"
+                required
+                style={{ flex: 1 }}
+                {...form.getInputProps(`${path}.${index}.name`)}
+            />
+            <Select
+                label="Field Type"
+                data={FIELD_TYPES}
+                required
+                style={{ width: 120 }}
+                {...form.getInputProps(`${path}.${index}.type`)}
+            />
+            <ActionIcon
+                color="red"
+                variant="subtle"
+                onClick={() => removeField(path, index)}
+                mt={28}
             >
-              Add Nested Field
-            </Button>
-            {renderFields(field.fields || [], `${path}.${index}.fields`)}
-          </Stack>
-        )}
-      </Card>
+              <IconTrash size={16} />
+            </ActionIcon>
+          </Group>
+
+          {field.type === 'select' && (
+              <TextInput
+                  label="Options (comma-separated)"
+                  placeholder="Option1, Option2, Option3"
+                  mt="sm"
+                  value={field.options?.join(', ') || ''}
+                  onChange={(event) => {
+                    const options = event.currentTarget.value.split(',').map(opt => opt.trim());
+                    form.setFieldValue(`${path}.${index}.options`, options);
+                  }}
+              />
+          )}
+
+          {field.type === 'group' && (
+              <Stack mt="sm">
+                <Button
+                    leftSection={<IconPlus size={14} />}
+                    variant="light"
+                    size="xs"
+                    onClick={() => addField(`${path}.${index}.fields`)}
+                >
+                  Add Nested Field
+                </Button>
+                {renderFields(field.fields || [], `${path}.${index}.fields`)}
+              </Stack>
+          )}
+        </div>
     ));
   };
 
   const handleSubmit = async (values: typeof form.values) => {
     try {
-      const result = await client.models.Template.create({
-        name: values.name,
-        fields: JSON.stringify(values.fields || []),
-      });
+      if (editingId) {
+        const result = await client.models.Template.update({
+          id: editingId,
+          name: values.name,
+          fields: JSON.stringify(values.fields || []),
+        });
 
-      if (!result.data) {
-        throw new Error('Failed to create template');
+        if (!result.data) {
+          throw new Error('Failed to update template');
+        }
+
+        notifications.show({
+          title: 'Success',
+          message: 'Template updated successfully',
+          color: 'green',
+        });
+
+        setEditingId(null);
+      } else {
+        const result = await client.models.Template.create({
+          name: values.name,
+          fields: JSON.stringify(values.fields || []),
+        });
+
+        if (!result.data) {
+          throw new Error('Failed to create template');
+        }
+
+        notifications.show({
+          title: 'Success',
+          message: 'Template created successfully',
+          color: 'green',
+        });
       }
-      
-      const newTemplate: Template = {
-        id: result.data.id,
-        name: result.data.name || '',
-        fields: result.data.fields || '[]'
-      };
-      
-      notifications.show({
-        title: 'Success',
-        message: 'Template created successfully',
-        color: 'green',
-      });
-      
+
       form.reset();
-      setTemplates(prev => [...prev, newTemplate]);
+      loadTemplates();
     } catch (error) {
-      console.error('Error creating template:', error);
+      console.error('Error saving template:', error);
       notifications.show({
         title: 'Error',
-        message: 'Failed to create template. Please try again.',
+        message: 'Failed to save template. Please try again.',
         color: 'red',
       });
     }
   };
 
   return (
-    <Container>
-      <Title order={1} mb="xl">Templates</Title>
-      
-      <Card shadow="sm" padding="lg" radius="md" withBorder mb="xl">
-        <form onSubmit={form.onSubmit(handleSubmit)}>
-          <Stack>
-            <TextInput
-              label="Template Name"
-              placeholder="Enter template name"
-              required
-              {...form.getInputProps('name')}
-            />
-            
-            <Button
-              leftSection={<IconPlus size={14} />}
-              variant="light"
-              onClick={() => addField()}
-            >
-              Add Field
-            </Button>
+      <div>
+        <Title order={1} mb="xl">Templates</Title>
 
-            {renderFields(form.values.fields)}
+        <div style={{
+          padding: '2rem',
+          backgroundColor: 'white',
+          borderRadius: '8px',
+          border: '1px solid #eee',
+          marginBottom: '2rem'
+        }}>
+          <form onSubmit={form.onSubmit(handleSubmit)}>
+            <Stack>
+              <TextInput
+                  label="Template Name"
+                  placeholder="Enter template name"
+                  required
+                  {...form.getInputProps('name')}
+              />
 
-            <Group justify="flex-end">
-              <Button type="submit">Create Template</Button>
-            </Group>
-          </Stack>
-        </form>
-      </Card>
+              <Button
+                  leftSection={<IconPlus size={14} />}
+                  variant="light"
+                  onClick={() => addField()}
+              >
+                Add Field
+              </Button>
 
-      {templates.length > 0 && (
-        <Stack mt="xl">
-          <Title order={2}>Existing Templates</Title>
-          {templates.map(template => (
-            <Card key={template.id} shadow="sm" padding="lg" radius="md" withBorder>
-              <Title order={3}>{template.name}</Title>
-              <div>Fields: {JSON.parse(template.fields).length}</div>
-            </Card>
-          ))}
-        </Stack>
-      )}
-    </Container>
+              {renderFields(form.values.fields)}
+
+              <Group justify="flex-end">
+                {editingId && (
+                    <Button variant="light" onClick={cancelEditing}>
+                      Cancel
+                    </Button>
+                )}
+                <Button type="submit" leftSection={editingId ? <IconDeviceFloppy size={14} /> : <IconPlus size={14} />}>
+                  {editingId ? 'Save Changes' : 'Create Template'}
+                </Button>
+              </Group>
+            </Stack>
+          </form>
+        </div>
+
+        {templates.length > 0 && (
+            <Stack mt="xl">
+              <Title order={2}>Existing Templates</Title>
+              {templates.map(template => (
+                  <div key={template.id} style={{
+                    padding: '2rem',
+                    backgroundColor: 'white',
+                    borderRadius: '8px',
+                    border: '1px solid #eee'
+                  }}>
+                    <Group justify="space-between" mb="md">
+                      <Title order={3}>{template.name}</Title>
+                      <Button
+                          variant="light"
+                          leftSection={<IconEdit size={14} />}
+                          onClick={() => startEditing(template)}
+                      >
+                        Edit
+                      </Button>
+                    </Group>
+                    <div>Fields: {JSON.parse(template.fields).length}</div>
+                  </div>
+              ))}
+            </Stack>
+        )}
+      </div>
   );
 }
