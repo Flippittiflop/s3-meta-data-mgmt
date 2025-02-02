@@ -87,6 +87,12 @@ export default function Images() {
     setActiveTab('gallery');
   };
 
+  const handleImageUpdate = () => {
+    if (selectedCategory) {
+      loadCategoryImages(selectedCategory);
+    }
+  };
+
   const renderCategoryView = () => {
     if (!selectedCategory) return null;
 
@@ -102,6 +108,7 @@ export default function Images() {
             template={template}
             images={images}
             onBack={handleBackToGallery}
+            onUpdate={handleImageUpdate}
         />
     );
   };
