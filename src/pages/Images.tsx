@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Title, Button, Select, Stack, Text, Grid, Image as MantineImage, TextInput, NumberInput, Group, Progress, Tabs, SimpleGrid, Card } from '@mantine/core';
+import { Title, Button, Select, Stack, Text, Grid, TextInput, NumberInput, Group, Progress, Tabs, SimpleGrid, Card } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
-import { IconUpload, IconPhoto, IconX, IconCategory } from '@tabler/icons-react';
+import { IconUpload, IconPhoto, IconX, IconCategory, IconDownload } from '@tabler/icons-react';
 import { generateClient } from 'aws-amplify/data';
-import { uploadData } from 'aws-amplify/storage';
+import { uploadData, getUrl } from 'aws-amplify/storage';
 import { notifications } from '@mantine/notifications';
+import { StorageImage } from '@aws-amplify/ui-react-storage';
 import type { Schema } from '../../amplify/data/resource';
 import type { Category, Template, TemplateField, Image } from '../types';
 
@@ -43,7 +44,6 @@ export default function Images() {
       }));
       setCategories(loadedCategories);
 
-      // Load images for each category
       loadedCategories.forEach(category => {
         loadCategoryImages(category.id);
       });
@@ -145,17 +145,49 @@ export default function Images() {
     });
   };
 
+  const handleDownload = async (image: Image) => {
+    try {
+      const result = await getUrl({
+        path: image.s3Key,
+        options: {
+          bucket: 's3MetaDataManagement',
+          validateObjectExistence: true,
+          expiresIn: 300,
+        }
+      });
+
+      if (result.url) {
+        const link = document.createElement('a');
+        link.href = result.url.toString();
+        link.download = image.s3Key.split('/').pop() || 'image';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+    } catch (error) {
+      console.error('Error downloading image:', error);
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to download image',
+        color: 'red',
+      });
+    }
+  };
+
   const handleSave = async () => {
     if (!selectedCategory) return;
+
+    const category = categories.find(c => c.id === selectedCategory);
+    if (!category) return;
 
     setIsUploading(true);
     try {
       await Promise.all(
           uploadedImages.map(async (img, index) => {
-            const key = `${selectedCategory}/${Date.now()}-${img.file.name}`;
+            const key = `media-files/${category.name}/${Date.now()}-${img.file.name}`;
             try {
-              const uploadResult = await uploadData({
-                path: `media-files/${key}`,
+              await uploadData({
+                path: key,
                 data: img.file,
                 options: {
                   bucket: 's3MetaDataManagement',
@@ -165,13 +197,11 @@ export default function Images() {
                     updateUploadProgress(index, progress);
                   },
                 },
-              }).result;
-
-              const s3Url = `https://s3MetaDataManagement.s3.amazonaws.com/media-files/${key}`;
+              });
 
               await client.models.Image.create({
-                s3Key: `media-files/${key}`,
-                s3Url: s3Url,
+                s3Key: key,
+                s3Url: key,
                 categoryId: selectedCategory,
                 metadata: JSON.stringify(img.metadata),
               });
@@ -314,12 +344,15 @@ export default function Images() {
                     marginBottom: '2rem'
                   }}>
                     <Grid>
-                      <Grid.Col span={{ base: 12, md: 4 }}>
-                        <MantineImage
+                      <Grid.Col span={{base: 12, md: 4}}>
+                        <img
                             src={image.preview}
                             alt={`Preview ${index + 1}`}
-                            fit="contain"
-                            h={200}
+                            style={{
+                              width: '100%',
+                              height: '200px',
+                              objectFit: 'contain'
+                            }}
                         />
                         {typeof image.uploadProgress === 'number' && (
                             <Progress
@@ -329,7 +362,7 @@ export default function Images() {
                             />
                         )}
                       </Grid.Col>
-                      <Grid.Col span={{ base: 12, md: 8 }}>
+                      <Grid.Col span={{base: 12, md: 8}}>
                         <Stack>
                           {selectedTemplate && JSON.parse(selectedTemplate.fields).map((field: TemplateField) =>
                               renderMetadataField(field, index)
@@ -408,15 +441,16 @@ export default function Images() {
                     padding="lg"
                     radius="md"
                     withBorder
-                    onClick={() => setSelectedImage(image)}
-                    style={{ cursor: 'pointer' }}
                 >
                   <Card.Section>
-                    <MantineImage
-                        src={image.s3Url}
-                        height={160}
-                        fit="cover"
+                    <StorageImage
+                        path={image.s3Key}
                         alt="Image"
+                        style={{
+                          width: '100%',
+                          height: '200px',
+                          objectFit: 'cover'
+                        }}
                     />
                   </Card.Section>
 
@@ -432,6 +466,17 @@ export default function Images() {
                         })}
                       </Stack>
                   )}
+
+                  <Button
+                      variant="light"
+                      color="blue"
+                      fullWidth
+                      mt="md"
+                      leftSection={<IconDownload size={14} />}
+                      onClick={() => handleDownload(image)}
+                  >
+                    Download
+                  </Button>
                 </Card>
             ))}
           </SimpleGrid>
