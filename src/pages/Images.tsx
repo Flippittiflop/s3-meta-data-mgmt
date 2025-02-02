@@ -1,33 +1,20 @@
 import { useState, useEffect } from 'react';
-import { Title, Button, Select, Stack, Text, Grid, TextInput, NumberInput, Group, Progress, Tabs, SimpleGrid, Card } from '@mantine/core';
-import { Dropzone } from '@mantine/dropzone';
-import { IconUpload, IconPhoto, IconX, IconCategory, IconDownload } from '@tabler/icons-react';
+import { Title, Tabs } from '@mantine/core';
 import { generateClient } from 'aws-amplify/data';
-import { uploadData, getUrl } from 'aws-amplify/storage';
-import { notifications } from '@mantine/notifications';
-import { StorageImage } from '@aws-amplify/ui-react-storage';
 import type { Schema } from '../../amplify/data/resource';
-import type { Category, Template, TemplateField, Image } from '../types';
+import type { Category, Template, Image } from '../types';
+import ImageUploader from '../components/images/ImageUploader';
+import ImageGallery from '../components/images/ImageGallery';
+import CategoryView from '../components/images/CategoryView';
 
 const client = generateClient<Schema>();
-
-interface UploadedImage {
-  file: File;
-  preview: string;
-  metadata: Record<string, any>;
-  uploadProgress?: number;
-}
 
 export default function Images() {
   const [activeTab, setActiveTab] = useState<string | null>('upload');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
-  const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
-  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
   const [categoryImages, setCategoryImages] = useState<Record<string, Image[]>>({});
-  const [selectedImage, setSelectedImage] = useState<Image | null>(null);
 
   useEffect(() => {
     loadCategories();
@@ -49,11 +36,6 @@ export default function Images() {
       });
     } catch (error) {
       console.error('Error loading categories:', error);
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to load categories',
-        color: 'red',
-      });
     }
   };
 
@@ -92,395 +74,35 @@ export default function Images() {
       })));
     } catch (error) {
       console.error('Error loading templates:', error);
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to load templates',
-        color: 'red',
-      });
     }
   };
 
-  const handleCategoryChange = (categoryId: string | null) => {
+  const handleCategorySelect = (categoryId: string) => {
     setSelectedCategory(categoryId);
-    if (categoryId) {
-      const category = categories.find(c => c.id === categoryId);
-      if (category) {
-        const template = templates.find(t => t.id === category.templateId);
-        setSelectedTemplate(template || null);
-      }
-    }
+    setActiveTab('category');
   };
 
-  const handleDrop = (files: File[]) => {
-    const newImages = files.map(file => ({
-      file,
-      preview: URL.createObjectURL(file),
-      metadata: {},
-    }));
-    setUploadedImages(prev => [...prev, ...newImages]);
+  const handleBackToGallery = () => {
+    setSelectedCategory(null);
+    setActiveTab('gallery');
   };
-
-  const handleMetadataChange = (imageIndex: number, field: string, value: any) => {
-    setUploadedImages(prev => {
-      const updated = [...prev];
-      updated[imageIndex] = {
-        ...updated[imageIndex],
-        metadata: {
-          ...updated[imageIndex].metadata,
-          [field]: value,
-        },
-      };
-      return updated;
-    });
-  };
-
-  const updateUploadProgress = (index: number, progress: number) => {
-    setUploadedImages(prev => {
-      const updated = [...prev];
-      updated[index] = {
-        ...updated[index],
-        uploadProgress: progress,
-      };
-      return updated;
-    });
-  };
-
-  const handleDownload = async (image: Image) => {
-    try {
-      const result = await getUrl({
-        path: image.s3Key,
-        options: {
-          bucket: 's3MetaDataManagement',
-          validateObjectExistence: true,
-          expiresIn: 300,
-        }
-      });
-
-      if (result.url) {
-        const link = document.createElement('a');
-        link.href = result.url.toString();
-        link.download = image.s3Key.split('/').pop() || 'image';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      }
-    } catch (error) {
-      console.error('Error downloading image:', error);
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to download image',
-        color: 'red',
-      });
-    }
-  };
-
-  const handleSave = async () => {
-    if (!selectedCategory) return;
-
-    const category = categories.find(c => c.id === selectedCategory);
-    if (!category) return;
-
-    setIsUploading(true);
-    try {
-      await Promise.all(
-          uploadedImages.map(async (img, index) => {
-            const key = `media-files/${category.name}/${Date.now()}-${img.file.name}`;
-            try {
-              await uploadData({
-                path: key,
-                data: img.file,
-                options: {
-                  bucket: 's3MetaDataManagement',
-                  onProgress: ({ transferredBytes, totalBytes }) => {
-                    if (!totalBytes) return;
-                    const progress = (transferredBytes / totalBytes) * 100;
-                    updateUploadProgress(index, progress);
-                  },
-                },
-              });
-
-              await client.models.Image.create({
-                s3Key: key,
-                s3Url: key,
-                categoryId: selectedCategory,
-                metadata: JSON.stringify(img.metadata),
-              });
-            } catch (error) {
-              console.error(`Error uploading image ${img.file.name}:`, error);
-              throw error;
-            }
-          })
-      );
-
-      notifications.show({
-        title: 'Success',
-        message: 'Images uploaded and saved successfully',
-        color: 'green',
-      });
-
-      setUploadedImages([]);
-      loadCategoryImages(selectedCategory);
-    } catch (error) {
-      console.error('Error saving images:', error);
-      notifications.show({
-        title: 'Error',
-        message: 'Failed to save images',
-        color: 'red',
-      });
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const renderMetadataField = (field: TemplateField, imageIndex: number, prefix = '') => {
-    const fieldName = prefix ? `${prefix}.${field.name}` : field.name;
-    const value = uploadedImages[imageIndex]?.metadata[fieldName] || '';
-
-    if (field.type === 'group' && field.fields) {
-      return (
-          <div key={fieldName} style={{
-            padding: '1rem',
-            marginBottom: '1rem',
-            border: '1px solid #eee',
-            borderRadius: '8px',
-            backgroundColor: 'white'
-          }}>
-            <Text fw={500} mb="xs">{field.name}</Text>
-            <Stack gap="xs">
-              {field.fields.map(subField => renderMetadataField(subField, imageIndex, fieldName))}
-            </Stack>
-          </div>
-      );
-    }
-
-    switch (field.type) {
-      case 'number':
-        return (
-            <NumberInput
-                key={fieldName}
-                label={field.name}
-                value={value}
-                onChange={(val) => handleMetadataChange(imageIndex, fieldName, val)}
-            />
-        );
-      case 'select':
-        return (
-            <Select
-                key={fieldName}
-                label={field.name}
-                data={field.options || []}
-                value={value}
-                onChange={(val) => handleMetadataChange(imageIndex, fieldName, val)}
-            />
-        );
-      default:
-        return (
-            <TextInput
-                key={fieldName}
-                label={field.name}
-                value={value}
-                onChange={(e) => handleMetadataChange(imageIndex, fieldName, e.currentTarget.value)}
-            />
-        );
-    }
-  };
-
-  const renderUploadView = () => (
-      <div>
-        <div style={{
-          padding: '2rem',
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          border: '1px solid #eee',
-          marginBottom: '2rem'
-        }}>
-          <Stack>
-            <Select
-                label="Category"
-                placeholder="Select a category"
-                data={categories.map(category => ({
-                  value: category.id,
-                  label: category.name,
-                }))}
-                value={selectedCategory}
-                onChange={handleCategoryChange}
-                required
-            />
-
-            {selectedCategory && (
-                <Dropzone
-                    onDrop={handleDrop}
-                    accept={['image/*']}
-                    maxSize={5 * 1024 ** 2}
-                    disabled={isUploading}
-                >
-                  <Stack align="center" gap="xs" style={{ minHeight: 120, justifyContent: 'center' }}>
-                    <Dropzone.Accept>
-                      <IconUpload size={32} />
-                    </Dropzone.Accept>
-                    <Dropzone.Reject>
-                      <IconX size={32} />
-                    </Dropzone.Reject>
-                    <Dropzone.Idle>
-                      <IconPhoto size={32} />
-                    </Dropzone.Idle>
-                    <Text size="sm" inline>
-                      Drag images here or click to select files
-                    </Text>
-                  </Stack>
-                </Dropzone>
-            )}
-          </Stack>
-        </div>
-
-        {uploadedImages.length > 0 && (
-            <>
-              {uploadedImages.map((image, index) => (
-                  <div key={index} style={{
-                    padding: '2rem',
-                    backgroundColor: 'white',
-                    borderRadius: '8px',
-                    border: '1px solid #eee',
-                    marginBottom: '2rem'
-                  }}>
-                    <Grid>
-                      <Grid.Col span={{base: 12, md: 4}}>
-                        <img
-                            src={image.preview}
-                            alt={`Preview ${index + 1}`}
-                            style={{
-                              width: '100%',
-                              height: '200px',
-                              objectFit: 'contain'
-                            }}
-                        />
-                        {typeof image.uploadProgress === 'number' && (
-                            <Progress
-                                value={image.uploadProgress}
-                                mt="md"
-                                color={image.uploadProgress === 100 ? 'green' : 'blue'}
-                            />
-                        )}
-                      </Grid.Col>
-                      <Grid.Col span={{base: 12, md: 8}}>
-                        <Stack>
-                          {selectedTemplate && JSON.parse(selectedTemplate.fields).map((field: TemplateField) =>
-                              renderMetadataField(field, index)
-                          )}
-                        </Stack>
-                      </Grid.Col>
-                    </Grid>
-                  </div>
-              ))}
-
-              <Group justify="center" mt="xl">
-                <Button
-                    size="lg"
-                    onClick={handleSave}
-                    loading={isUploading}
-                    disabled={isUploading}
-                >
-                  {isUploading ? 'Uploading...' : 'Save All Images'}
-                </Button>
-              </Group>
-            </>
-        )}
-      </div>
-  );
-
-  const renderGalleryView = () => (
-      <div>
-        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-          {categories.map(category => (
-              <Card
-                  key={category.id}
-                  shadow="sm"
-                  padding="lg"
-                  radius="md"
-                  withBorder
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => {
-                    setSelectedCategory(category.id);
-                    setActiveTab('category');
-                  }}
-              >
-                <Group justify="center" mb="md">
-                  <IconCategory size={32} />
-                </Group>
-                <Text ta="center" fw={500} size="lg">{category.name}</Text>
-                <Text ta="center" c="dimmed" size="sm">
-                  {categoryImages[category.id]?.length || 0} images
-                </Text>
-              </Card>
-          ))}
-        </SimpleGrid>
-      </div>
-  );
 
   const renderCategoryView = () => {
     if (!selectedCategory) return null;
 
-    const images = categoryImages[selectedCategory] || [];
     const category = categories.find(c => c.id === selectedCategory);
-    const template = templates.find(t => t.id === category?.templateId);
+    if (!category) return null;
+
+    const template = templates.find(t => t.id === category.templateId);
+    const images = categoryImages[selectedCategory] || [];
 
     return (
-        <div>
-          <Group justify="space-between" mb="xl">
-            <Title order={2}>{category?.name}</Title>
-            <Button variant="light" onClick={() => setActiveTab('gallery')}>
-              Back to Categories
-            </Button>
-          </Group>
-
-          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-            {images.map(image => (
-                <Card
-                    key={image.id}
-                    shadow="sm"
-                    padding="lg"
-                    radius="md"
-                    withBorder
-                >
-                  <Card.Section>
-                    <StorageImage
-                        path={image.s3Key}
-                        alt="Image"
-                        style={{
-                          width: '100%',
-                          height: '200px',
-                          objectFit: 'cover'
-                        }}
-                    />
-                  </Card.Section>
-
-                  {template && (
-                      <Stack mt="md">
-                        {JSON.parse(template.fields).map((field: TemplateField) => {
-                          const metadata = JSON.parse(image.metadata);
-                          return (
-                              <Text key={field.name} size="sm">
-                                <strong>{field.name}:</strong> {metadata[field.name] || 'N/A'}
-                              </Text>
-                          );
-                        })}
-                      </Stack>
-                  )}
-
-                  <Button
-                      variant="light"
-                      color="blue"
-                      fullWidth
-                      mt="md"
-                      leftSection={<IconDownload size={14} />}
-                      onClick={() => handleDownload(image)}
-                  >
-                    Download
-                  </Button>
-                </Card>
-            ))}
-          </SimpleGrid>
-        </div>
+        <CategoryView
+            category={category}
+            template={template}
+            images={images}
+            onBack={handleBackToGallery}
+        />
     );
   };
 
@@ -495,11 +117,19 @@ export default function Images() {
           </Tabs.List>
 
           <Tabs.Panel value="upload">
-            {renderUploadView()}
+            <ImageUploader
+                categories={categories}
+                templates={templates}
+                onUploadComplete={loadCategoryImages}
+            />
           </Tabs.Panel>
 
           <Tabs.Panel value="gallery">
-            {renderGalleryView()}
+            <ImageGallery
+                categories={categories}
+                categoryImages={categoryImages}
+                onCategorySelect={handleCategorySelect}
+            />
           </Tabs.Panel>
 
           <Tabs.Panel value="category">
