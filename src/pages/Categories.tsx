@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Title, Button, TextInput, Select, Stack, Group } from '@mantine/core';
+import { Title, Button, TextInput, Select, Stack, Group, Text } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';

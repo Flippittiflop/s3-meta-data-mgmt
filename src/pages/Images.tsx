@@ -127,6 +127,7 @@ export default function Images() {
                 options: {
                   bucket: 's3MetaDataManagement',
                   onProgress: ({ transferredBytes, totalBytes }) => {
+                    if (!totalBytes) return;
                     const progress = (transferredBytes / totalBytes) * 100;
                     updateUploadProgress(index, progress);
                   },
