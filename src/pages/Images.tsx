@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Title, Button, Select, Stack, Text, Grid, Image as MantineImage, TextInput, NumberInput, Group, Progress } from '@mantine/core';
+import { Title, Button, Select, Stack, Text, Grid, Image as MantineImage, TextInput, NumberInput, Group, Progress, Tabs, SimpleGrid, Card } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
-import { IconUpload, IconPhoto, IconX } from '@tabler/icons-react';
+import { IconUpload, IconPhoto, IconX, IconCategory } from '@tabler/icons-react';
 import { generateClient } from 'aws-amplify/data';
 import { uploadData } from 'aws-amplify/storage';
 import { notifications } from '@mantine/notifications';
 import type { Schema } from '../../amplify/data/resource';
-import type { Category, Template, TemplateField } from '../types';
+import type { Category, Template, TemplateField, Image } from '../types';
 
 const client = generateClient<Schema>();
 
@@ -18,12 +18,15 @@ interface UploadedImage {
 }
 
 export default function Images() {
+  const [activeTab, setActiveTab] = useState<string | null>('upload');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [categories, setCategories] = useState<Category[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
   const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [categoryImages, setCategoryImages] = useState<Record<string, Image[]>>({});
+  const [selectedImage, setSelectedImage] = useState<Image | null>(null);
 
   useEffect(() => {
     loadCategories();
@@ -33,11 +36,17 @@ export default function Images() {
   const loadCategories = async () => {
     try {
       const result = await client.models.Category.list();
-      setCategories(result.data.map(category => ({
+      const loadedCategories = result.data.map(category => ({
         id: category.id,
         name: category.name || '',
         templateId: category.templateId || ''
-      })));
+      }));
+      setCategories(loadedCategories);
+
+      // Load images for each category
+      loadedCategories.forEach(category => {
+        loadCategoryImages(category.id);
+      });
     } catch (error) {
       console.error('Error loading categories:', error);
       notifications.show({
@@ -45,6 +54,31 @@ export default function Images() {
         message: 'Failed to load categories',
         color: 'red',
       });
+    }
+  };
+
+  const loadCategoryImages = async (categoryId: string) => {
+    try {
+      const result = await client.models.Image.list({
+        filter: {
+          categoryId: {
+            eq: categoryId
+          }
+        }
+      });
+
+      setCategoryImages(prev => ({
+        ...prev,
+        [categoryId]: result.data.map(image => ({
+          id: image.id,
+          s3Key: image.s3Key || '',
+          s3Url: image.s3Url || '',
+          categoryId: image.categoryId || '',
+          metadata: image.metadata || '{}'
+        }))
+      }));
+    } catch (error) {
+      console.error('Error loading category images:', error);
     }
   };
 
@@ -118,11 +152,10 @@ export default function Images() {
     try {
       await Promise.all(
           uploadedImages.map(async (img, index) => {
-            // Upload to S3
             const key = `${selectedCategory}/${Date.now()}-${img.file.name}`;
             try {
               const uploadResult = await uploadData({
-                key,
+                path: `media-files/${key}`,
                 data: img.file,
                 options: {
                   bucket: 's3MetaDataManagement',
@@ -134,10 +167,11 @@ export default function Images() {
                 },
               }).result;
 
-              // Create image record in DynamoDB
+              const s3Url = `https://s3MetaDataManagement.s3.amazonaws.com/media-files/${key}`;
+
               await client.models.Image.create({
-                s3Key: key,
-                s3Url: uploadResult.key, // The S3 URL will be constructed from the key
+                s3Key: `media-files/${key}`,
+                s3Url: s3Url,
                 categoryId: selectedCategory,
                 metadata: JSON.stringify(img.metadata),
               });
@@ -155,6 +189,7 @@ export default function Images() {
       });
 
       setUploadedImages([]);
+      loadCategoryImages(selectedCategory);
     } catch (error) {
       console.error('Error saving images:', error);
       notifications.show({
@@ -220,10 +255,8 @@ export default function Images() {
     }
   };
 
-  return (
+  const renderUploadView = () => (
       <div>
-        <Title order={1} mb="xl">Images</Title>
-
         <div style={{
           padding: '2rem',
           backgroundColor: 'white',
@@ -248,7 +281,7 @@ export default function Images() {
                 <Dropzone
                     onDrop={handleDrop}
                     accept={['image/*']}
-                    maxSize={5 * 1024 ** 2} // 5MB
+                    maxSize={5 * 1024 ** 2}
                     disabled={isUploading}
                 >
                   <Stack align="center" gap="xs" style={{ minHeight: 120, justifyContent: 'center' }}>
@@ -319,6 +352,115 @@ export default function Images() {
               </Group>
             </>
         )}
+      </div>
+  );
+
+  const renderGalleryView = () => (
+      <div>
+        <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
+          {categories.map(category => (
+              <Card
+                  key={category.id}
+                  shadow="sm"
+                  padding="lg"
+                  radius="md"
+                  withBorder
+                  style={{ cursor: 'pointer' }}
+                  onClick={() => {
+                    setSelectedCategory(category.id);
+                    setActiveTab('category');
+                  }}
+              >
+                <Group justify="center" mb="md">
+                  <IconCategory size={32} />
+                </Group>
+                <Text ta="center" fw={500} size="lg">{category.name}</Text>
+                <Text ta="center" c="dimmed" size="sm">
+                  {categoryImages[category.id]?.length || 0} images
+                </Text>
+              </Card>
+          ))}
+        </SimpleGrid>
+      </div>
+  );
+
+  const renderCategoryView = () => {
+    if (!selectedCategory) return null;
+
+    const images = categoryImages[selectedCategory] || [];
+    const category = categories.find(c => c.id === selectedCategory);
+    const template = templates.find(t => t.id === category?.templateId);
+
+    return (
+        <div>
+          <Group justify="space-between" mb="xl">
+            <Title order={2}>{category?.name}</Title>
+            <Button variant="light" onClick={() => setActiveTab('gallery')}>
+              Back to Categories
+            </Button>
+          </Group>
+
+          <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
+            {images.map(image => (
+                <Card
+                    key={image.id}
+                    shadow="sm"
+                    padding="lg"
+                    radius="md"
+                    withBorder
+                    onClick={() => setSelectedImage(image)}
+                    style={{ cursor: 'pointer' }}
+                >
+                  <Card.Section>
+                    <MantineImage
+                        src={image.s3Url}
+                        height={160}
+                        fit="cover"
+                        alt="Image"
+                    />
+                  </Card.Section>
+
+                  {template && (
+                      <Stack mt="md">
+                        {JSON.parse(template.fields).map((field: TemplateField) => {
+                          const metadata = JSON.parse(image.metadata);
+                          return (
+                              <Text key={field.name} size="sm">
+                                <strong>{field.name}:</strong> {metadata[field.name] || 'N/A'}
+                              </Text>
+                          );
+                        })}
+                      </Stack>
+                  )}
+                </Card>
+            ))}
+          </SimpleGrid>
+        </div>
+    );
+  };
+
+  return (
+      <div>
+        <Title order={1} mb="xl">Images</Title>
+
+        <Tabs value={activeTab} onChange={setActiveTab}>
+          <Tabs.List mb="xl">
+            <Tabs.Tab value="upload">Upload Images</Tabs.Tab>
+            <Tabs.Tab value="gallery">Browse Images</Tabs.Tab>
+          </Tabs.List>
+
+          <Tabs.Panel value="upload">
+            {renderUploadView()}
+          </Tabs.Panel>
+
+          <Tabs.Panel value="gallery">
+            {renderGalleryView()}
+          </Tabs.Panel>
+
+          <Tabs.Panel value="category">
+            {renderCategoryView()}
+          </Tabs.Panel>
+        </Tabs>
       </div>
   );
 }
