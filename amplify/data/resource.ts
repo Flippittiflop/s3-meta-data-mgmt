@@ -7,23 +7,19 @@ specifies that any user authenticated via an API key can "create", "read",
 "update", and "delete" any "Todo" records.
 =========================================================================*/
 const schema = a.schema({
-  Todo: a
-      .model({
-        content: a.string(),
-      }).authorization((allow) => [allow.publicApiKey()]),
 
   Template: a.model({
     name: a.string(),
     fields: a.string(), // JSON string of field definitions
     categories: a.hasMany('Category', 'templateId'),
-  }).authorization((allow) => [allow.publicApiKey()]),
+  }).authorization((allow) => [allow.publicApiKey(), allow.groups(["ADMINS"]).to(["read","create", "update", "delete"])]),
 
   Category: a.model({
     name: a.string(),
     templateId: a.id(),
     template: a.belongsTo('Template', 'templateId'),
     images: a.hasMany('Image', 'categoryId'),
-  }).authorization((allow) => [allow.publicApiKey()]),
+  }).authorization((allow) => [allow.publicApiKey(), allow.groups(["ADMINS"]).to(["read","create", "update", "delete"])]),
 
   Image: a.model({
     s3Key: a.string(),
@@ -31,7 +27,7 @@ const schema = a.schema({
     categoryId: a.id(),
     category: a.belongsTo('Category', 'categoryId'),
     metadata: a.string(), // JSON string of metadata values
-  }).authorization((allow) => [allow.publicApiKey()]),
+  }).authorization((allow) => [allow.publicApiKey(), allow.groups(["ADMINS", "USERS"]).to(["read","create", "update", "delete"])]),
 });
 
 

@@ -20,6 +20,7 @@ const FIELD_TYPES = [
 export default function Templates() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [templateUsage, setTemplateUsage] = useState<Record<string, number>>({});
 
   const form = useForm({
     initialValues: {
@@ -33,6 +34,7 @@ export default function Templates() {
 
   useEffect(() => {
     loadTemplates();
+    loadTemplateUsage();
   }, []);
 
   const loadTemplates = async () => {
@@ -50,6 +52,60 @@ export default function Templates() {
       notifications.show({
         title: 'Error',
         message: 'Failed to load templates',
+        color: 'red',
+      });
+    }
+  };
+
+  const loadTemplateUsage = async () => {
+    try {
+      const result = await client.models.Category.list();
+      const usage: Record<string, number> = {};
+
+      result.data.forEach(category => {
+        if (category.templateId) {
+          usage[category.templateId] = (usage[category.templateId] || 0) + 1;
+        }
+      });
+
+      setTemplateUsage(usage);
+    } catch (error) {
+      console.error('Error loading template usage:', error);
+    }
+  };
+
+  const handleDelete = async (templateId: string) => {
+    // Check if template is in use
+    if (templateUsage[templateId]) {
+      notifications.show({
+        title: 'Cannot Delete',
+        message: `This template is being used by ${templateUsage[templateId]} ${
+            templateUsage[templateId] === 1 ? 'category' : 'categories'
+        }. Remove all categories using this template first.`,
+        color: 'red',
+      });
+      return;
+    }
+
+    if (!confirm('Are you sure you want to delete this template?')) return;
+
+    try {
+      await client.models.Template.delete({
+        id: templateId
+      });
+
+      notifications.show({
+        title: 'Success',
+        message: 'Template deleted successfully',
+        color: 'green',
+      });
+
+      loadTemplates();
+    } catch (error) {
+      console.error('Error deleting template:', error);
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to delete template',
         color: 'red',
       });
     }
@@ -184,6 +240,7 @@ export default function Templates() {
 
       form.reset();
       loadTemplates();
+      loadTemplateUsage();
     } catch (error) {
       console.error('Error saving template:', error);
       notifications.show({
@@ -249,16 +306,37 @@ export default function Templates() {
                     border: '1px solid #eee'
                   }}>
                     <Group justify="space-between" mb="md">
-                      <Title order={3}>{template.name}</Title>
-                      <Button
-                          variant="light"
-                          leftSection={<IconEdit size={14} />}
-                          onClick={() => startEditing(template)}
-                      >
-                        Edit
-                      </Button>
+                      <div>
+                        <Title order={3}>{template.name}</Title>
+                        <Group gap="xs">
+                          <span>Fields: {JSON.parse(template.fields).length}</span>
+                          {templateUsage[template.id] > 0 && (
+                              <span style={{ color: '#666' }}>
+                              • Used by {templateUsage[template.id]} {templateUsage[template.id] === 1 ? 'category' : 'categories'}
+                            </span>
+                          )}
+                        </Group>
+                      </div>
+                      <Group>
+                        <Button
+                            variant="light"
+                            color="red"
+                            leftSection={<IconTrash size={14} />}
+                            onClick={() => handleDelete(template.id)}
+                            disabled={templateUsage[template.id] > 0}
+                            title={templateUsage[template.id] > 0 ? 'Cannot delete template while in use' : 'Delete template'}
+                        >
+                          Delete
+                        </Button>
+                        <Button
+                            variant="light"
+                            leftSection={<IconEdit size={14} />}
+                            onClick={() => startEditing(template)}
+                        >
+                          Edit
+                        </Button>
+                      </Group>
                     </Group>
-                    <div>Fields: {JSON.parse(template.fields).length}</div>
                   </div>
               ))}
             </Stack>

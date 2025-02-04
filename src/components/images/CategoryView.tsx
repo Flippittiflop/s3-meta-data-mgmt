@@ -1,7 +1,7 @@
 import { Title, Button, SimpleGrid, Card, Stack, Text, Group, Modal, TextInput, NumberInput, Select } from '@mantine/core';
 import { IconDownload, IconEdit, IconTrash } from '@tabler/icons-react';
 import { StorageImage } from '@aws-amplify/ui-react-storage';
-import { getUrl, remove } from 'aws-amplify/storage';
+import { getUrl, remove, uploadData } from 'aws-amplify/storage';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
 import { useState } from 'react';
@@ -87,13 +87,57 @@ export default function CategoryView({ category, template, images, onBack, onUpd
 
     const handleEdit = (image: Image) => {
         setEditingImage(image);
-        setEditedMetadata(JSON.parse(image.metadata));
+        try {
+            const metadata = JSON.parse(image.metadata);
+            setEditedMetadata(metadata || {});
+        } catch (error) {
+            console.error('Error parsing metadata:', error);
+            setEditedMetadata({});
+        }
     };
 
     const handleSaveEdit = async () => {
         if (!editingImage) return;
 
         try {
+            // Get the current file
+            const result = await getUrl({
+                path: editingImage.s3Key,
+                options: {
+                    bucket: 's3MetaDataManagement',
+                    validateObjectExistence: true,
+                }
+            });
+
+            if (!result.url) {
+                throw new Error('Could not get image URL');
+            }
+
+            // Fetch the file content
+            const response = await fetch(result.url.toString());
+            const blob = await response.blob();
+
+            // Convert metadata to S3-compatible format
+            const s3Metadata: Record<string, string> = {};
+            Object.entries(editedMetadata).forEach(([key, value]) => {
+                // S3 metadata keys must be lowercase
+                const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
+                // Convert all values to strings
+                s3Metadata[sanitizedKey] = String(value || '');
+            });
+
+            // Upload the file with new metadata
+            await uploadData({
+                path: editingImage.s3Key,
+                data: blob,
+                options: {
+                    bucket: 's3MetaDataManagement',
+                    metadata: s3Metadata,
+                    contentType: blob.type,
+                }
+            });
+
+            // Update DynamoDB
             await client.models.Image.update({
                 id: editingImage.id,
                 metadata: JSON.stringify(editedMetadata),
@@ -139,12 +183,20 @@ export default function CategoryView({ category, template, images, onBack, onUpd
 
         switch (field.type) {
             case 'number':
+                const numberValue = value === undefined || value === null || value === '' ? '' : Number(value);
                 return (
                     <NumberInput
                         key={field.name}
                         label={field.name}
-                        value={value === '' ? '' : Number(value)}
-                        onChange={(val) => setEditedMetadata(prev => ({ ...prev, [field.name]: val }))}
+                        value={numberValue}
+                        onChange={(newValue) => {
+                            setEditedMetadata(prev => ({
+                                ...prev,
+                                [field.name]: newValue === '' ? null : newValue
+                            }));
+                        }}
+                        allowNegative={true}
+                        allowDecimal={true}
                     />
                 );
             case 'select':
@@ -163,7 +215,10 @@ export default function CategoryView({ category, template, images, onBack, onUpd
                         key={field.name}
                         label={field.name}
                         value={value?.toString() || ''}
-                        onChange={(e) => setEditedMetadata(prev => ({ ...prev, [field.name]: e.currentTarget.value }))}
+                        onChange={(e) => {
+                            const newValue = e.target.value; // Capture the value early to avoid null reference
+                            setEditedMetadata(prev => ({ ...prev, [field.name]: newValue }));
+                        }}
                     />
                 );
         }

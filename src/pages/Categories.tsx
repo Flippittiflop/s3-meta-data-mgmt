@@ -3,7 +3,7 @@ import { Title, Button, TextInput, Select, Stack, Group, Text } from '@mantine/c
 import { useForm } from '@mantine/form';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
-import { IconPlus, IconEdit, IconDeviceFloppy } from '@tabler/icons-react';
+import { IconPlus, IconEdit, IconDeviceFloppy, IconTrash } from '@tabler/icons-react';
 import type { Schema } from '../../amplify/data/resource';
 import type { Template, Category } from '../types';
 
@@ -13,6 +13,7 @@ export default function Categories() {
   const [templates, setTemplates] = useState<Template[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [categoryUsage, setCategoryUsage] = useState<Record<string, number>>({});
 
   const form = useForm({
     initialValues: {
@@ -24,6 +25,7 @@ export default function Categories() {
   useEffect(() => {
     loadTemplates();
     loadCategories();
+    loadCategoryUsage();
   }, []);
 
   const loadTemplates = async () => {
@@ -61,6 +63,61 @@ export default function Categories() {
       notifications.show({
         title: 'Error',
         message: 'Failed to load categories',
+        color: 'red',
+      });
+    }
+  };
+
+  const loadCategoryUsage = async () => {
+    try {
+      const result = await client.models.Image.list();
+      const usage: Record<string, number> = {};
+
+      result.data.forEach(image => {
+        if (image.categoryId) {
+          usage[image.categoryId] = (usage[image.categoryId] || 0) + 1;
+        }
+      });
+
+      setCategoryUsage(usage);
+    } catch (error) {
+      console.error('Error loading category usage:', error);
+    }
+  };
+
+  const handleDelete = async (categoryId: string) => {
+    // Check if category is in use
+    if (categoryUsage[categoryId]) {
+      notifications.show({
+        title: 'Cannot Delete',
+        message: `This category contains ${categoryUsage[categoryId]} ${
+            categoryUsage[categoryId] === 1 ? 'image' : 'images'
+        }. Remove all images from this category first.`,
+        color: 'red',
+      });
+      return;
+    }
+
+    if (!confirm('Are you sure you want to delete this category?')) return;
+
+    try {
+      await client.models.Category.delete({
+        id: categoryId
+      });
+
+      notifications.show({
+        title: 'Success',
+        message: 'Category deleted successfully',
+        color: 'green',
+      });
+
+      loadCategories();
+      loadCategoryUsage();
+    } catch (error) {
+      console.error('Error deleting category:', error);
+      notifications.show({
+        title: 'Error',
+        message: 'Failed to delete category',
         color: 'red',
       });
     }
@@ -118,6 +175,7 @@ export default function Categories() {
 
       form.reset();
       loadCategories();
+      loadCategoryUsage();
     } catch (error) {
       console.error('Error saving category:', error);
       notifications.show({
@@ -186,15 +244,34 @@ export default function Categories() {
                       <Group justify="space-between" mb="md">
                         <div>
                           <Title order={3}>{category.name}</Title>
-                          <Text size="sm" c="dimmed">Template: {template?.name || 'Unknown'}</Text>
+                          <Group gap="xs">
+                            <Text size="sm" c="dimmed">Template: {template?.name || 'Unknown'}</Text>
+                            {categoryUsage[category.id] > 0 && (
+                                <Text size="sm" c="dimmed">
+                                  • Contains {categoryUsage[category.id]} {categoryUsage[category.id] === 1 ? 'image' : 'images'}
+                                </Text>
+                            )}
+                          </Group>
                         </div>
-                        <Button
-                            variant="light"
-                            leftSection={<IconEdit size={14} />}
-                            onClick={() => startEditing(category)}
-                        >
-                          Edit
-                        </Button>
+                        <Group>
+                          <Button
+                              variant="light"
+                              color="red"
+                              leftSection={<IconTrash size={14} />}
+                              onClick={() => handleDelete(category.id)}
+                              disabled={categoryUsage[category.id] > 0}
+                              title={categoryUsage[category.id] > 0 ? 'Cannot delete category while it contains images' : 'Delete category'}
+                          >
+                            Delete
+                          </Button>
+                          <Button
+                              variant="light"
+                              leftSection={<IconEdit size={14} />}
+                              onClick={() => startEditing(category)}
+                          >
+                            Edit
+                          </Button>
+                        </Group>
                       </Group>
                     </div>
                 );
