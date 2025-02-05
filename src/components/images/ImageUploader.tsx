@@ -43,7 +43,9 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
     const handleDrop = (files: File[]) => {
         const newImages = files.map(file => ({
             file,
-            preview: URL.createObjectURL(file),
+            preview: file.type.startsWith('video/')
+                ? URL.createObjectURL(file) // Video preview
+                : URL.createObjectURL(file), // Image preview
             metadata: {},
         }));
         setUploadedImages(prev => [...prev, ...newImages]);
@@ -131,17 +133,17 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
 
             notifications.show({
                 title: 'Success',
-                message: 'Images uploaded and saved successfully',
+                message: 'Files uploaded and saved successfully',
                 color: 'green',
             });
 
             setUploadedImages([]);
             onUploadComplete(selectedCategory);
         } catch (error) {
-            console.error('Error saving images:', error);
+            console.error('Error saving files:', error);
             notifications.show({
                 title: 'Error',
-                message: 'Failed to save images',
+                message: 'Failed to save files',
                 color: 'red',
             });
         } finally {
@@ -230,8 +232,11 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                     {selectedCategory && (
                         <Dropzone
                             onDrop={handleDrop}
-                            accept={['image/*', 'video/*']}
-                            maxSize={5 * 1024 ** 2}
+                            accept={{
+                                'image/*': [], // Accept all image types
+                                'video/mp4': ['.mp4'] // Accept MP4 videos
+                            }}
+                            maxSize={100 * 1024 ** 2} // Increased to 100MB to accommodate videos
                             disabled={isUploading}
                         >
                             <Stack align="center" gap="xs" style={{ minHeight: 120, justifyContent: 'center' }}>
@@ -245,7 +250,7 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                                     <IconPhoto size={32} />
                                 </Dropzone.Idle>
                                 <Text size="sm" inline>
-                                    Drag images here or click to select files
+                                    Drag images or MP4 videos here or click to select files
                                 </Text>
                             </Stack>
                         </Dropzone>
@@ -265,15 +270,27 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                         }}>
                             <Grid>
                                 <Grid.Col span={{base: 12, md: 4}}>
-                                    <img
-                                        src={image.preview}
-                                        alt={`Preview ${index + 1}`}
-                                        style={{
-                                            width: '100%',
-                                            height: '200px',
-                                            objectFit: 'contain'
-                                        }}
-                                    />
+                                    {image.file.type.startsWith('video/') ? (
+                                        <video
+                                            src={image.preview}
+                                            controls
+                                            style={{
+                                                width: '100%',
+                                                height: '200px',
+                                                objectFit: 'contain'
+                                            }}
+                                        />
+                                    ) : (
+                                        <img
+                                            src={image.preview}
+                                            alt={`Preview ${index + 1}`}
+                                            style={{
+                                                width: '100%',
+                                                height: '200px',
+                                                objectFit: 'contain'
+                                            }}
+                                        />
+                                    )}
                                     {typeof image.uploadProgress === 'number' && (
                                         <Progress
                                             value={image.uploadProgress}
@@ -300,7 +317,7 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                             loading={isUploading}
                             disabled={isUploading}
                         >
-                            {isUploading ? 'Uploading...' : 'Save All Images'}
+                            {isUploading ? 'Uploading...' : 'Save All Files'}
                         </Button>
                     </Group>
                 </>
@@ -308,4 +325,3 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
         </div>
     );
 }
-

@@ -4,7 +4,7 @@ import { StorageImage } from '@aws-amplify/ui-react-storage';
 import { getUrl, remove, uploadData } from 'aws-amplify/storage';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { Category, Template, Image, TemplateField } from '../../types';
 import type { Schema } from '../../../amplify/data/resource';
 
@@ -21,6 +21,34 @@ interface CategoryViewProps {
 export default function CategoryView({ category, template, images, onBack, onUpdate }: CategoryViewProps) {
     const [editingImage, setEditingImage] = useState<Image | null>(null);
     const [editedMetadata, setEditedMetadata] = useState<Record<string, any>>({});
+    const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+
+    useEffect(() => {
+        // Load URLs for all media files
+        const loadMediaUrls = async () => {
+            const urls: Record<string, string> = {};
+            for (const image of images) {
+                try {
+                    const result = await getUrl({
+                        path: image.s3Key,
+                        options: {
+                            bucket: 's3MetaDataManagement',
+                            validateObjectExistence: true,
+                            expiresIn: 3600, // 1 hour
+                        }
+                    });
+                    if (result.url) {
+                        urls[image.id] = result.url.toString();
+                    }
+                } catch (error) {
+                    console.error('Error loading media URL:', error);
+                }
+            }
+            setMediaUrls(urls);
+        };
+
+        loadMediaUrls();
+    }, [images]);
 
     const handleDownload = async (image: Image) => {
         try {
@@ -36,23 +64,23 @@ export default function CategoryView({ category, template, images, onBack, onUpd
             if (result.url) {
                 const link = document.createElement('a');
                 link.href = result.url.toString();
-                link.download = image.s3Key.split('/').pop() || 'image';
+                link.download = image.s3Key.split('/').pop() || 'media';
                 document.body.appendChild(link);
                 link.click();
                 document.body.removeChild(link);
             }
         } catch (error) {
-            console.error('Error downloading image:', error);
+            console.error('Error downloading file:', error);
             notifications.show({
                 title: 'Error',
-                message: 'Failed to download image',
+                message: 'Failed to download file',
                 color: 'red',
             });
         }
     };
 
     const handleDelete = async (image: Image) => {
-        if (!confirm('Are you sure you want to delete this image?')) return;
+        if (!confirm('Are you sure you want to delete this file?')) return;
 
         try {
             // Delete from S3
@@ -70,16 +98,16 @@ export default function CategoryView({ category, template, images, onBack, onUpd
 
             notifications.show({
                 title: 'Success',
-                message: 'Image deleted successfully',
+                message: 'File deleted successfully',
                 color: 'green',
             });
 
             onUpdate();
         } catch (error) {
-            console.error('Error deleting image:', error);
+            console.error('Error deleting file:', error);
             notifications.show({
                 title: 'Error',
-                message: 'Failed to delete image',
+                message: 'Failed to delete file',
                 color: 'red',
             });
         }
@@ -110,7 +138,7 @@ export default function CategoryView({ category, template, images, onBack, onUpd
             });
 
             if (!result.url) {
-                throw new Error('Could not get image URL');
+                throw new Error('Could not get file URL');
             }
 
             // Fetch the file content
@@ -145,17 +173,17 @@ export default function CategoryView({ category, template, images, onBack, onUpd
 
             notifications.show({
                 title: 'Success',
-                message: 'Image metadata updated successfully',
+                message: 'File metadata updated successfully',
                 color: 'green',
             });
 
             setEditingImage(null);
             onUpdate();
         } catch (error) {
-            console.error('Error updating image metadata:', error);
+            console.error('Error updating file metadata:', error);
             notifications.show({
                 title: 'Error',
-                message: 'Failed to update image metadata',
+                message: 'Failed to update file metadata',
                 color: 'red',
             });
         }
@@ -216,12 +244,17 @@ export default function CategoryView({ category, template, images, onBack, onUpd
                         label={field.name}
                         value={value?.toString() || ''}
                         onChange={(e) => {
-                            const newValue = e.target.value; // Capture the value early to avoid null reference
+                            const newValue = e.target.value;
                             setEditedMetadata(prev => ({ ...prev, [field.name]: newValue }));
                         }}
                     />
                 );
         }
+    };
+
+    const isVideo = (key: string) => {
+        const extension = key.split('.').pop()?.toLowerCase();
+        return extension === 'mp4';
     };
 
     return (
@@ -244,15 +277,40 @@ export default function CategoryView({ category, template, images, onBack, onUpd
                             withBorder
                         >
                             <Card.Section>
-                                <StorageImage
-                                    path={image.s3Key}
-                                    alt="Image"
-                                    style={{
-                                        width: '100%',
-                                        height: '200px',
-                                        objectFit: 'cover'
-                                    }}
-                                />
+                                {isVideo(image.s3Key) ? (
+                                    mediaUrls[image.id] ? (
+                                        <video
+                                            src={mediaUrls[image.id]}
+                                            controls
+                                            style={{
+                                                width: '100%',
+                                                height: '200px',
+                                                objectFit: 'contain'
+                                            }}
+                                        />
+                                    ) : (
+                                        <div style={{
+                                            width: '100%',
+                                            height: '200px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'center',
+                                            backgroundColor: '#f8f9fa'
+                                        }}>
+                                            Loading video...
+                                        </div>
+                                    )
+                                ) : (
+                                    <StorageImage
+                                        path={image.s3Key}
+                                        alt="Image"
+                                        style={{
+                                            width: '100%',
+                                            height: '200px',
+                                            objectFit: 'contain'
+                                        }}
+                                    />
+                                )}
                             </Card.Section>
 
                             {template && (
@@ -302,7 +360,7 @@ export default function CategoryView({ category, template, images, onBack, onUpd
             <Modal
                 opened={!!editingImage}
                 onClose={() => setEditingImage(null)}
-                title="Edit Image Metadata"
+                title="Edit File Metadata"
                 size="lg"
             >
                 {template && editingImage && (
