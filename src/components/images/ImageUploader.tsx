@@ -82,13 +82,15 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
         if (!selectedCategory) return;
 
         const category = categories.find(c => c.id === selectedCategory);
+
         if (!category) return;
 
         setIsUploading(true);
         try {
             await Promise.all(
                 uploadedImages.map(async (img, index) => {
-                    const key = `media-files/${category.name}/${Date.now()}-${img.file.name}`;
+
+                    const key = `media-files/${category.name.toLowerCase()}/${Date.now()}-${img.file.name}`;
 
                     // Convert metadata to S3-compatible format
                     const s3Metadata: Record<string, string> = {};
@@ -228,7 +230,7 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                     {selectedCategory && (
                         <Dropzone
                             onDrop={handleDrop}
-                            accept={['image/*']}
+                            accept={['image/*', 'video/*']}
                             maxSize={5 * 1024 ** 2}
                             disabled={isUploading}
                         >
