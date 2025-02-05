@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react';
-import { Title, Button, TextInput, Stack, Group, Select, ActionIcon } from '@mantine/core';
+import { Title, Button, TextInput, Stack, Group, Select, ActionIcon, Text } from '@mantine/core';
 import { useForm } from '@mantine/form';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
 import { IconPlus, IconTrash, IconEdit, IconDeviceFloppy } from '@tabler/icons-react';
+import { usePermissions } from '../hooks/usePermissions';
+import ConfirmDialog from '../components/ConfirmDialog';
 import type { Schema } from '../../amplify/data/resource';
 import type { Template, TemplateField } from '../types';
 
@@ -18,9 +20,15 @@ const FIELD_TYPES = [
 ] as const;
 
 export default function Templates() {
+  const { canManageTemplates } = usePermissions();
+  const isAdmin = canManageTemplates();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [templateUsage, setTemplateUsage] = useState<Record<string, number>>({});
+  const [deleteConfirm, setDeleteConfirm] = useState<{opened: boolean; templateId: string | null}>({
+    opened: false,
+    templateId: null
+  });
 
   const form = useForm({
     initialValues: {
@@ -75,7 +83,6 @@ export default function Templates() {
   };
 
   const handleDelete = async (templateId: string) => {
-    // Check if template is in use
     if (templateUsage[templateId]) {
       notifications.show({
         title: 'Cannot Delete',
@@ -87,11 +94,18 @@ export default function Templates() {
       return;
     }
 
-    if (!confirm('Are you sure you want to delete this template?')) return;
+    setDeleteConfirm({
+      opened: true,
+      templateId
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm.templateId) return;
 
     try {
       await client.models.Template.delete({
-        id: templateId
+        id: deleteConfirm.templateId
       });
 
       notifications.show({
@@ -108,6 +122,8 @@ export default function Templates() {
         message: 'Failed to delete template',
         color: 'red',
       });
+    } finally {
+      setDeleteConfirm({ opened: false, templateId: null });
     }
   };
 
@@ -255,45 +271,49 @@ export default function Templates() {
       <div>
         <Title order={1} mb="xl">Templates</Title>
 
-        <div style={{
-          padding: '2rem',
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          border: '1px solid #eee',
-          marginBottom: '2rem'
-        }}>
-          <form onSubmit={form.onSubmit(handleSubmit)}>
-            <Stack>
-              <TextInput
-                  label="Template Name"
-                  placeholder="Enter template name"
-                  required
-                  {...form.getInputProps('name')}
-              />
+        {isAdmin ? (
+            <div style={{
+              padding: '2rem',
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              border: '1px solid #eee',
+              marginBottom: '2rem'
+            }}>
+              <form onSubmit={form.onSubmit(handleSubmit)}>
+                <Stack>
+                  <TextInput
+                      label="Template Name"
+                      placeholder="Enter template name"
+                      required
+                      {...form.getInputProps('name')}
+                  />
 
-              <Button
-                  leftSection={<IconPlus size={14} />}
-                  variant="light"
-                  onClick={() => addField()}
-              >
-                Add Field
-              </Button>
+                  <Button
+                      leftSection={<IconPlus size={14} />}
+                      variant="light"
+                      onClick={() => addField()}
+                  >
+                    Add Field
+                  </Button>
 
-              {renderFields(form.values.fields)}
+                  {renderFields(form.values.fields)}
 
-              <Group justify="flex-end">
-                {editingId && (
-                    <Button variant="light" onClick={cancelEditing}>
-                      Cancel
+                  <Group justify="flex-end">
+                    {editingId && (
+                        <Button variant="light" onClick={cancelEditing}>
+                          Cancel
+                        </Button>
+                    )}
+                    <Button type="submit" leftSection={editingId ? <IconDeviceFloppy size={14} /> : <IconPlus size={14} />}>
+                      {editingId ? 'Save Changes' : 'Create Template'}
                     </Button>
-                )}
-                <Button type="submit" leftSection={editingId ? <IconDeviceFloppy size={14} /> : <IconPlus size={14} />}>
-                  {editingId ? 'Save Changes' : 'Create Template'}
-                </Button>
-              </Group>
-            </Stack>
-          </form>
-        </div>
+                  </Group>
+                </Stack>
+              </form>
+            </div>
+        ) : (
+            <Text c="dimmed" mb="xl">You need administrator privileges to create templates.</Text>
+        )}
 
         {templates.length > 0 && (
             <Stack mt="xl">
@@ -312,35 +332,47 @@ export default function Templates() {
                           <span>Fields: {JSON.parse(template.fields).length}</span>
                           {templateUsage[template.id] > 0 && (
                               <span style={{ color: '#666' }}>
-                              • Used by {templateUsage[template.id]} {templateUsage[template.id] === 1 ? 'category' : 'categories'}
-                            </span>
+                                • Used by {templateUsage[template.id]} {templateUsage[template.id] === 1 ? 'category' : 'categories'}
+                              </span>
                           )}
                         </Group>
                       </div>
-                      <Group>
-                        <Button
-                            variant="light"
-                            color="red"
-                            leftSection={<IconTrash size={14} />}
-                            onClick={() => handleDelete(template.id)}
-                            disabled={templateUsage[template.id] > 0}
-                            title={templateUsage[template.id] > 0 ? 'Cannot delete template while in use' : 'Delete template'}
-                        >
-                          Delete
-                        </Button>
-                        <Button
-                            variant="light"
-                            leftSection={<IconEdit size={14} />}
-                            onClick={() => startEditing(template)}
-                        >
-                          Edit
-                        </Button>
-                      </Group>
+                      {isAdmin && (
+                          <Group>
+                            <Button
+                                variant="light"
+                                color="red"
+                                leftSection={<IconTrash size={14} />}
+                                onClick={() => handleDelete(template.id)}
+                                disabled={templateUsage[template.id] > 0}
+                                title={templateUsage[template.id] > 0 ? 'Cannot delete template while in use' : 'Delete template'}
+                            >
+                              Delete
+                            </Button>
+                            <Button
+                                variant="light"
+                                leftSection={<IconEdit size={14} />}
+                                onClick={() => startEditing(template)}
+                            >
+                              Edit
+                            </Button>
+                          </Group>
+                      )}
                     </Group>
                   </div>
               ))}
             </Stack>
         )}
+
+        <ConfirmDialog
+            opened={deleteConfirm.opened}
+            onClose={() => setDeleteConfirm({ opened: false, templateId: null })}
+            onConfirm={confirmDelete}
+            title="Delete Template"
+            message="Are you sure you want to delete this template? This action cannot be undone."
+            confirmLabel="Delete"
+            confirmColor="red"
+        />
       </div>
   );
 }

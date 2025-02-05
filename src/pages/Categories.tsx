@@ -4,16 +4,24 @@ import { useForm } from '@mantine/form';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
 import { IconPlus, IconEdit, IconDeviceFloppy, IconTrash } from '@tabler/icons-react';
+import { usePermissions } from '../hooks/usePermissions';
+import ConfirmDialog from '../components/ConfirmDialog';
 import type { Schema } from '../../amplify/data/resource';
 import type { Template, Category } from '../types';
 
 const client = generateClient<Schema>();
 
 export default function Categories() {
+  const { canManageCategories } = usePermissions();
+  const isAdmin = canManageCategories();
   const [templates, setTemplates] = useState<Template[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [categoryUsage, setCategoryUsage] = useState<Record<string, number>>({});
+  const [deleteConfirm, setDeleteConfirm] = useState<{opened: boolean; categoryId: string | null}>({
+    opened: false,
+    categoryId: null
+  });
 
   const form = useForm({
     initialValues: {
@@ -86,7 +94,6 @@ export default function Categories() {
   };
 
   const handleDelete = async (categoryId: string) => {
-    // Check if category is in use
     if (categoryUsage[categoryId]) {
       notifications.show({
         title: 'Cannot Delete',
@@ -98,11 +105,18 @@ export default function Categories() {
       return;
     }
 
-    if (!confirm('Are you sure you want to delete this category?')) return;
+    setDeleteConfirm({
+      opened: true,
+      categoryId
+    });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteConfirm.categoryId) return;
 
     try {
       await client.models.Category.delete({
-        id: categoryId
+        id: deleteConfirm.categoryId
       });
 
       notifications.show({
@@ -120,6 +134,8 @@ export default function Categories() {
         message: 'Failed to delete category',
         color: 'red',
       });
+    } finally {
+      setDeleteConfirm({ opened: false, categoryId: null });
     }
   };
 
@@ -190,44 +206,48 @@ export default function Categories() {
       <div>
         <Title order={1} mb="xl">Categories</Title>
 
-        <div style={{
-          padding: '2rem',
-          backgroundColor: 'white',
-          borderRadius: '8px',
-          border: '1px solid #eee',
-          marginBottom: '2rem'
-        }}>
-          <form onSubmit={form.onSubmit(handleSubmit)}>
-            <Stack>
-              <TextInput
-                  label="Category Name"
-                  placeholder="Enter category name"
-                  required
-                  {...form.getInputProps('name')}
-              />
-              <Select
-                  label="Template"
-                  placeholder="Select a template"
-                  data={templates.map(template => ({
-                    value: template.id,
-                    label: template.name,
-                  }))}
-                  required
-                  {...form.getInputProps('templateId')}
-              />
-              <Group justify="flex-end">
-                {editingId && (
-                    <Button variant="light" onClick={cancelEditing}>
-                      Cancel
+        {isAdmin ? (
+            <div style={{
+              padding: '2rem',
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              border: '1px solid #eee',
+              marginBottom: '2rem'
+            }}>
+              <form onSubmit={form.onSubmit(handleSubmit)}>
+                <Stack>
+                  <TextInput
+                      label="Category Name"
+                      placeholder="Enter category name"
+                      required
+                      {...form.getInputProps('name')}
+                  />
+                  <Select
+                      label="Template"
+                      placeholder="Select a template"
+                      data={templates.map(template => ({
+                        value: template.id,
+                        label: template.name,
+                      }))}
+                      required
+                      {...form.getInputProps('templateId')}
+                  />
+                  <Group justify="flex-end">
+                    {editingId && (
+                        <Button variant="light" onClick={cancelEditing}>
+                          Cancel
+                        </Button>
+                    )}
+                    <Button type="submit" leftSection={editingId ? <IconDeviceFloppy size={14} /> : <IconPlus size={14} />}>
+                      {editingId ? 'Save Changes' : 'Create Category'}
                     </Button>
-                )}
-                <Button type="submit" leftSection={editingId ? <IconDeviceFloppy size={14} /> : <IconPlus size={14} />}>
-                  {editingId ? 'Save Changes' : 'Create Category'}
-                </Button>
-              </Group>
-            </Stack>
-          </form>
-        </div>
+                  </Group>
+                </Stack>
+              </form>
+            </div>
+        ) : (
+            <Text c="dimmed" mb="xl">You need administrator privileges to create categories.</Text>
+        )}
 
         {categories.length > 0 && (
             <Stack mt="xl">
@@ -253,31 +273,43 @@ export default function Categories() {
                             )}
                           </Group>
                         </div>
-                        <Group>
-                          <Button
-                              variant="light"
-                              color="red"
-                              leftSection={<IconTrash size={14} />}
-                              onClick={() => handleDelete(category.id)}
-                              disabled={categoryUsage[category.id] > 0}
-                              title={categoryUsage[category.id] > 0 ? 'Cannot delete category while it contains images' : 'Delete category'}
-                          >
-                            Delete
-                          </Button>
-                          <Button
-                              variant="light"
-                              leftSection={<IconEdit size={14} />}
-                              onClick={() => startEditing(category)}
-                          >
-                            Edit
-                          </Button>
-                        </Group>
+                        {isAdmin && (
+                            <Group>
+                              <Button
+                                  variant="light"
+                                  color="red"
+                                  leftSection={<IconTrash size={14} />}
+                                  onClick={() => handleDelete(category.id)}
+                                  disabled={categoryUsage[category.id] > 0}
+                                  title={categoryUsage[category.id] > 0 ? 'Cannot delete category while it contains images' : 'Delete category'}
+                              >
+                                Delete
+                              </Button>
+                              <Button
+                                  variant="light"
+                                  leftSection={<IconEdit size={14} />}
+                                  onClick={() => startEditing(category)}
+                              >
+                                Edit
+                              </Button>
+                            </Group>
+                        )}
                       </Group>
                     </div>
                 );
               })}
             </Stack>
         )}
+
+        <ConfirmDialog
+            opened={deleteConfirm.opened}
+            onClose={() => setDeleteConfirm({ opened: false, categoryId: null })}
+            onConfirm={confirmDelete}
+            title="Delete Category"
+            message="Are you sure you want to delete this category? This action cannot be undone."
+            confirmLabel="Delete"
+            confirmColor="red"
+        />
       </div>
   );
 }
