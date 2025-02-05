@@ -12,14 +12,14 @@ const schema = a.schema({
     name: a.string(),
     fields: a.string(), // JSON string of field definitions
     categories: a.hasMany('Category', 'templateId'),
-  }).authorization((allow) => [allow.publicApiKey(), allow.groups(["ADMINS"]).to(["read","create", "update", "delete"])]),
+  }).authorization((allow) => [allow.groups(["ADMINS"]).to(["read","create", "update", "delete"]), allow.groups(["USERS"]).to(["read"])]),
 
   Category: a.model({
     name: a.string(),
     templateId: a.id(),
     template: a.belongsTo('Template', 'templateId'),
     images: a.hasMany('Image', 'categoryId'),
-  }).authorization((allow) => [allow.publicApiKey(), allow.groups(["ADMINS"]).to(["read","create", "update", "delete"])]),
+  }).authorization((allow) => [allow.groups(["ADMINS"]).to(["read","create", "update", "delete"]),allow.groups(["USERS"]).to(["read"])]),
 
   Image: a.model({
     s3Key: a.string(),
@@ -27,7 +27,7 @@ const schema = a.schema({
     categoryId: a.id(),
     category: a.belongsTo('Category', 'categoryId'),
     metadata: a.string(), // JSON string of metadata values
-  }).authorization((allow) => [allow.publicApiKey(), allow.groups(["ADMINS", "USERS"]).to(["read","create", "update", "delete"])]),
+  }).authorization((allow) => [allow.groups(["ADMINS", "USERS"]).to(["read","create", "update", "delete"]),]),
 });
 
 
@@ -36,7 +36,7 @@ export type Schema = ClientSchema<typeof schema>;
 export const data = defineData({
   schema,
   authorizationModes: {
-    defaultAuthorizationMode: "apiKey",
+    defaultAuthorizationMode: "userPool",
     // API Key is used for a.allow.public() rules
     apiKeyAuthorizationMode: {
       expiresInDays: 30,
