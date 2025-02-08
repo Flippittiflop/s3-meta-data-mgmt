@@ -1,10 +1,11 @@
-import { Title, Button, SimpleGrid, Card, Stack, Text, Group, Modal, TextInput, NumberInput, Select } from '@mantine/core';
-import { IconDownload, IconEdit, IconTrash } from '@tabler/icons-react';
+import { Title, Button, SimpleGrid, Card, Stack, Text, Group, Modal, TextInput, NumberInput, Select, Checkbox } from '@mantine/core';
+import { IconDownload, IconEdit, IconTrash, IconGripVertical } from '@tabler/icons-react';
 import { StorageImage } from '@aws-amplify/ui-react-storage';
 import { getUrl, remove, uploadData } from 'aws-amplify/storage';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
 import { useState, useEffect } from 'react';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import type { Category, Template, Image, TemplateField } from '../../types';
 import type { Schema } from '../../../amplify/data/resource';
 
@@ -18,10 +19,19 @@ interface CategoryViewProps {
     onUpdate: () => void;
 }
 
-export default function CategoryView({ category, template, images, onBack, onUpdate }: CategoryViewProps) {
+export default function CategoryView({ category, template, images: initialImages, onBack, onUpdate }: CategoryViewProps) {
     const [editingImage, setEditingImage] = useState<Image | null>(null);
     const [editedMetadata, setEditedMetadata] = useState<Record<string, any>>({});
     const [mediaUrls, setMediaUrls] = useState<Record<string, string>>({});
+    const [images, setImages] = useState<Image[]>([]);
+
+    useEffect(() => {
+        // Sort images by sequence when they're loaded
+        const sortedImages = [...initialImages].sort((a, b) =>
+            (JSON.parse(a.metadata).sequence || 0) - (JSON.parse(b.metadata).sequence || 0)
+        );
+        setImages(sortedImages);
+    }, [initialImages]);
 
     useEffect(() => {
         // Load URLs for all media files
@@ -34,7 +44,7 @@ export default function CategoryView({ category, template, images, onBack, onUpd
                         options: {
                             bucket: 's3MetaDataManagement',
                             validateObjectExistence: true,
-                            expiresIn: 3600, // 1 hour
+                            expiresIn: 3600,
                         }
                     });
                     if (result.url) {
@@ -49,6 +59,154 @@ export default function CategoryView({ category, template, images, onBack, onUpd
 
         loadMediaUrls();
     }, [images]);
+
+    const handleDragEnd = async (result: any) => {
+        if (!result.destination) return;
+
+        const items = Array.from(images);
+        const [reorderedItem] = items.splice(result.source.index, 1);
+        items.splice(result.destination.index, 0, reorderedItem);
+
+        // Update sequences
+        const updatedItems = items.map((item, index) => {
+            const metadata = JSON.parse(item.metadata);
+            return {
+                ...item,
+                metadata: JSON.stringify({ ...metadata, sequence: index })
+            };
+        });
+
+        setImages(updatedItems);
+
+        // Update sequences in database and S3
+        try {
+            await Promise.all(updatedItems.map(async (image, index) => {
+                // Update DynamoDB
+                await client.models.Image.update({
+                    id: image.id,
+                    metadata: image.metadata,
+                });
+
+                // Update S3 metadata
+                const result = await getUrl({
+                    path: image.s3Key,
+                    options: {
+                        bucket: 's3MetaDataManagement',
+                        validateObjectExistence: true,
+                    }
+                });
+
+                if (!result.url) return;
+
+                const response = await fetch(result.url.toString());
+                const blob = await response.blob();
+
+                const metadata = JSON.parse(image.metadata);
+                const s3Metadata = {
+                    'sequence': String(index),
+                    'is-active': String(metadata.isActive || true),
+                    ...Object.entries(metadata).reduce((acc, [key, value]) => {
+                        const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
+                        acc[sanitizedKey] = String(value || '');
+                        return acc;
+                    }, {} as Record<string, string>)
+                };
+
+                await uploadData({
+                    path: image.s3Key,
+                    data: blob,
+                    options: {
+                        bucket: 's3MetaDataManagement',
+                        metadata: s3Metadata,
+                        contentType: blob.type,
+                    }
+                });
+            }));
+
+            notifications.show({
+                title: 'Success',
+                message: 'Image order updated successfully',
+                color: 'green',
+            });
+        } catch (error) {
+            console.error('Error updating image order:', error);
+            notifications.show({
+                title: 'Error',
+                message: 'Failed to update image order',
+                color: 'red',
+            });
+        }
+    };
+
+    const handleToggleActive = async (image: Image) => {
+        try {
+            const metadata = JSON.parse(image.metadata);
+            const newMetadata = {
+                ...metadata,
+                isActive: !metadata.isActive
+            };
+
+            // Update DynamoDB
+            await client.models.Image.update({
+                id: image.id,
+                metadata: JSON.stringify(newMetadata),
+            });
+
+            // Update S3 metadata
+            const result = await getUrl({
+                path: image.s3Key,
+                options: {
+                    bucket: 's3MetaDataManagement',
+                    validateObjectExistence: true,
+                }
+            });
+
+            if (!result.url) return;
+
+            const response = await fetch(result.url.toString());
+            const blob = await response.blob();
+
+            const s3Metadata = {
+                'is-active': String(!metadata.isActive),
+                'sequence': String(metadata.sequence || 0),
+                ...Object.entries(metadata).reduce((acc, [key, value]) => {
+                    const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
+                    acc[sanitizedKey] = String(value || '');
+                    return acc;
+                }, {} as Record<string, string>)
+            };
+
+            await uploadData({
+                path: image.s3Key,
+                data: blob,
+                options: {
+                    bucket: 's3MetaDataManagement',
+                    metadata: s3Metadata,
+                    contentType: blob.type,
+                }
+            });
+
+            // Update local state
+            setImages(prev => prev.map(img =>
+                img.id === image.id
+                    ? { ...img, metadata: JSON.stringify(newMetadata) }
+                    : img
+            ));
+
+            notifications.show({
+                title: 'Success',
+                message: 'Image status updated successfully',
+                color: 'green',
+            });
+        } catch (error) {
+            console.error('Error updating image status:', error);
+            notifications.show({
+                title: 'Error',
+                message: 'Failed to update image status',
+                color: 'red',
+            });
+        }
+    };
 
     const handleDownload = async (image: Image) => {
         try {
@@ -267,94 +425,126 @@ export default function CategoryView({ category, template, images, onBack, onUpd
                     </Button>
                 </Group>
 
-                <SimpleGrid cols={{ base: 1, sm: 2, lg: 3 }} spacing="lg">
-                    {images.map(image => (
-                        <Card
-                            key={image.id}
-                            shadow="sm"
-                            padding="lg"
-                            radius="md"
-                            withBorder
-                        >
-                            <Card.Section>
-                                {isVideo(image.s3Key) ? (
-                                    mediaUrls[image.id] ? (
-                                        <video
-                                            src={mediaUrls[image.id]}
-                                            controls
-                                            style={{
-                                                width: '100%',
-                                                height: '200px',
-                                                objectFit: 'contain'
-                                            }}
-                                        />
-                                    ) : (
-                                        <div style={{
-                                            width: '100%',
-                                            height: '200px',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'center',
-                                            backgroundColor: '#f8f9fa'
-                                        }}>
-                                            Loading video...
-                                        </div>
-                                    )
-                                ) : (
-                                    <StorageImage
-                                        path={image.s3Key}
-                                        alt="Image"
-                                        style={{
-                                            width: '100%',
-                                            height: '200px',
-                                            objectFit: 'contain'
-                                        }}
-                                    />
-                                )}
-                            </Card.Section>
+                <DragDropContext onDragEnd={handleDragEnd}>
+                    <Droppable droppableId="images">
+                        {(provided) => (
+                            <SimpleGrid
+                                {...provided.droppableProps}
+                                ref={provided.innerRef}
+                                cols={{ base: 1, sm: 2, lg: 3 }}
+                                spacing="lg"
+                            >
+                                {images.map((image, index) => {
+                                    const metadata = JSON.parse(image.metadata);
+                                    return (
+                                        <Draggable key={image.id} draggableId={image.id} index={index}>
+                                            {(provided) => (
+                                                <Card
+                                                    ref={provided.innerRef}
+                                                    {...provided.draggableProps}
+                                                    shadow="sm"
+                                                    padding="lg"
+                                                    radius="md"
+                                                    withBorder
+                                                    style={provided.draggableProps.style}
+                                                >
+                                                    <Group mb="md">
+                                                        <div {...provided.dragHandleProps}>
+                                                            <IconGripVertical size={24} style={{ cursor: 'grab' }} />
+                                                        </div>
+                                                        <Checkbox
+                                                            label="Active"
+                                                            checked={metadata.isActive !== false}
+                                                            onChange={() => handleToggleActive(image)}
+                                                        />
+                                                    </Group>
 
-                            {template && (
-                                <Stack mt="md">
-                                    {JSON.parse(template.fields).map((field: TemplateField) => {
-                                        const metadata = JSON.parse(image.metadata);
-                                        return (
-                                            <Text key={field.name} size="sm">
-                                                <strong>{field.name}:</strong> {metadata[field.name] || 'N/A'}
-                                            </Text>
-                                        );
-                                    })}
-                                </Stack>
-                            )}
+                                                    <Card.Section>
+                                                        {isVideo(image.s3Key) ? (
+                                                            mediaUrls[image.id] ? (
+                                                                <video
+                                                                    src={mediaUrls[image.id]}
+                                                                    controls
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        height: '200px',
+                                                                        objectFit: 'contain'
+                                                                    }}
+                                                                />
+                                                            ) : (
+                                                                <div style={{
+                                                                    width: '100%',
+                                                                    height: '200px',
+                                                                    display: 'flex',
+                                                                    alignItems: 'center',
+                                                                    justifyContent: 'center',
+                                                                    backgroundColor: '#f8f9fa'
+                                                                }}>
+                                                                    Loading video...
+                                                                </div>
+                                                            )
+                                                        ) : (
+                                                            <StorageImage
+                                                                path={image.s3Key}
+                                                                alt="Image"
+                                                                style={{
+                                                                    width: '100%',
+                                                                    height: '200px',
+                                                                    objectFit: 'contain'
+                                                                }}
+                                                            />
+                                                        )}
+                                                    </Card.Section>
 
-                            <Group mt="md">
-                                <Button
-                                    variant="light"
-                                    color="blue"
-                                    leftSection={<IconDownload size={14} />}
-                                    onClick={() => handleDownload(image)}
-                                >
-                                    Download
-                                </Button>
-                                <Button
-                                    variant="light"
-                                    color="yellow"
-                                    leftSection={<IconEdit size={14} />}
-                                    onClick={() => handleEdit(image)}
-                                >
-                                    Edit
-                                </Button>
-                                <Button
-                                    variant="light"
-                                    color="red"
-                                    leftSection={<IconTrash size={14} />}
-                                    onClick={() => handleDelete(image)}
-                                >
-                                    Delete
-                                </Button>
-                            </Group>
-                        </Card>
-                    ))}
-                </SimpleGrid>
+                                                    {template && (
+                                                        <Stack mt="md">
+                                                            {JSON.parse(template.fields).map((field: TemplateField) => {
+                                                                const metadata = JSON.parse(image.metadata);
+                                                                return (
+                                                                    <Text key={field.name} size="sm">
+                                                                        <strong>{field.name}:</strong> {metadata[field.name] || 'N/A'}
+                                                                    </Text>
+                                                                );
+                                                            })}
+                                                        </Stack>
+                                                    )}
+
+                                                    <Group mt="md">
+                                                        <Button
+                                                            variant="light"
+                                                            color="blue"
+                                                            leftSection={<IconDownload size={14} />}
+                                                            onClick={() => handleDownload(image)}
+                                                        >
+                                                            Download
+                                                        </Button>
+                                                        <Button
+                                                            variant="light"
+                                                            color="yellow"
+                                                            leftSection={<IconEdit size={14} />}
+                                                            onClick={() => handleEdit(image)}
+                                                        >
+                                                            Edit
+                                                        </Button>
+                                                        <Button
+                                                            variant="light"
+                                                            color="red"
+                                                            leftSection={<IconTrash size={14} />}
+                                                            onClick={() => handleDelete(image)}
+                                                        >
+                                                            Delete
+                                                        </Button>
+                                                    </Group>
+                                                </Card>
+                                            )}
+                                        </Draggable>
+                                    );
+                                })}
+                                {provided.placeholder}
+                            </SimpleGrid>
+                        )}
+                    </Droppable>
+                </DragDropContext>
             </Stack>
 
             <Modal

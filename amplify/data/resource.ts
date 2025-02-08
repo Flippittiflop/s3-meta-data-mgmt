@@ -27,6 +27,8 @@ const schema = a.schema({
     categoryId: a.id(),
     category: a.belongsTo('Category', 'categoryId'),
     metadata: a.string(), // JSON string of metadata values
+    isActive: a.boolean(),
+    sequence: a.integer()
   }).authorization((allow) => [allow.groups(["ADMINS", "USERS"]).to(["read","create", "update", "delete"]),]),
 });
 

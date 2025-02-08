@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Button, Select, Stack, Text, Grid, TextInput, NumberInput, Group, Progress } from '@mantine/core';
+import { Button, Select, Stack, Text, Grid, TextInput, NumberInput, Group, Progress, Checkbox, ActionIcon } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
-import { IconUpload, IconPhoto, IconX } from '@tabler/icons-react';
+import { IconUpload, IconPhoto, IconX, IconTrash, IconGripVertical } from '@tabler/icons-react';
 import { generateClient } from 'aws-amplify/data';
 import { uploadData } from 'aws-amplify/storage';
 import { notifications } from '@mantine/notifications';
+import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
 import type { Schema } from '../../../amplify/data/resource';
 import type { Category, Template, TemplateField } from '../../types';
 
@@ -15,6 +16,8 @@ interface UploadedImage {
     preview: string;
     metadata: Record<string, any>;
     uploadProgress?: number;
+    isActive: boolean;
+    sequence: number;
 }
 
 interface ImageUploaderProps {
@@ -41,14 +44,50 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
     };
 
     const handleDrop = (files: File[]) => {
-        const newImages = files.map(file => ({
+        const newImages = files.map((file, index) => ({
             file,
             preview: file.type.startsWith('video/')
-                ? URL.createObjectURL(file) // Video preview
-                : URL.createObjectURL(file), // Image preview
+                ? URL.createObjectURL(file)
+                : URL.createObjectURL(file),
             metadata: {},
+            isActive: true,
+            sequence: uploadedImages.length + index
         }));
         setUploadedImages(prev => [...prev, ...newImages]);
+    };
+
+    const handleDeleteImage = (index: number) => {
+        setUploadedImages(prev => {
+            const updated = [...prev];
+            URL.revokeObjectURL(updated[index].preview); // Clean up the preview URL
+            updated.splice(index, 1);
+            // Update sequences
+            return updated.map((img, idx) => ({ ...img, sequence: idx }));
+        });
+    };
+
+    const handleDragEnd = (result: any) => {
+        if (!result.destination) return;
+
+        const items = Array.from(uploadedImages);
+        const [reorderedItem] = items.splice(result.source.index, 1);
+        items.splice(result.destination.index, 0, reorderedItem);
+
+        // Update sequences after reordering
+        const updatedItems = items.map((item, index) => ({
+            ...item,
+            sequence: index
+        }));
+
+        setUploadedImages(updatedItems);
+    };
+
+    const handleToggleActive = (index: number) => {
+        setUploadedImages(prev => {
+            const updated = [...prev];
+            updated[index] = { ...updated[index], isActive: !updated[index].isActive };
+            return updated;
+        });
     };
 
     const handleMetadataChange = (imageIndex: number, field: string, value: any) => {
@@ -84,24 +123,24 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
         if (!selectedCategory) return;
 
         const category = categories.find(c => c.id === selectedCategory);
-
         if (!category) return;
 
         setIsUploading(true);
         try {
             await Promise.all(
                 uploadedImages.map(async (img, index) => {
-
                     const key = `media-files/${category.name.toLowerCase()}/${Date.now()}-${img.file.name}`;
 
-                    // Convert metadata to S3-compatible format
-                    const s3Metadata: Record<string, string> = {};
-                    Object.entries(img.metadata || {}).forEach(([key, value]) => {
-                        // S3 metadata keys must be lowercase
-                        const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
-                        // Convert all values to strings
-                        s3Metadata[sanitizedKey] = String(value || '');
-                    });
+                    // Convert metadata to S3-compatible format and add isActive and sequence
+                    const s3Metadata: Record<string, string> = {
+                        'is-active': String(img.isActive),
+                        'sequence': String(img.sequence),
+                        ...Object.entries(img.metadata || {}).reduce((acc, [key, value]) => {
+                            const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
+                            acc[sanitizedKey] = String(value || '');
+                            return acc;
+                        }, {} as Record<string, string>)
+                    };
 
                     try {
                         await uploadData({
@@ -123,6 +162,8 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                             s3Url: key,
                             categoryId: selectedCategory,
                             metadata: JSON.stringify(img.metadata || {}),
+                            isActive: img.isActive,
+                            sequence: img.sequence
                         });
                     } catch (error) {
                         console.error(`Error uploading image ${img.file.name}:`, error);
@@ -260,55 +301,90 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
 
             {uploadedImages.length > 0 && (
                 <>
-                    {uploadedImages.map((image, index) => (
-                        <div key={index} style={{
-                            padding: '2rem',
-                            backgroundColor: 'white',
-                            borderRadius: '8px',
-                            border: '1px solid #eee',
-                            marginBottom: '2rem'
-                        }}>
-                            <Grid>
-                                <Grid.Col span={{base: 12, md: 4}}>
-                                    {image.file.type.startsWith('video/') ? (
-                                        <video
-                                            src={image.preview}
-                                            controls
-                                            style={{
-                                                width: '100%',
-                                                height: '200px',
-                                                objectFit: 'contain'
-                                            }}
-                                        />
-                                    ) : (
-                                        <img
-                                            src={image.preview}
-                                            alt={`Preview ${index + 1}`}
-                                            style={{
-                                                width: '100%',
-                                                height: '200px',
-                                                objectFit: 'contain'
-                                            }}
-                                        />
-                                    )}
-                                    {typeof image.uploadProgress === 'number' && (
-                                        <Progress
-                                            value={image.uploadProgress}
-                                            mt="md"
-                                            color={image.uploadProgress === 100 ? 'green' : 'blue'}
-                                        />
-                                    )}
-                                </Grid.Col>
-                                <Grid.Col span={{base: 12, md: 8}}>
-                                    <Stack>
-                                        {selectedTemplate && JSON.parse(selectedTemplate.fields).map((field: TemplateField) =>
-                                            renderMetadataField(field, index)
-                                        )}
-                                    </Stack>
-                                </Grid.Col>
-                            </Grid>
-                        </div>
-                    ))}
+                    <DragDropContext onDragEnd={handleDragEnd}>
+                        <Droppable droppableId="images">
+                            {(provided) => (
+                                <div {...provided.droppableProps} ref={provided.innerRef}>
+                                    {uploadedImages.map((image, index) => (
+                                        <Draggable key={index} draggableId={`image-${index}`} index={index}>
+                                            {(provided) => (
+                                                <div
+                                                    ref={provided.innerRef}
+                                                    {...provided.draggableProps}
+                                                    style={{
+                                                        padding: '2rem',
+                                                        backgroundColor: 'white',
+                                                        borderRadius: '8px',
+                                                        border: '1px solid #eee',
+                                                        marginBottom: '2rem',
+                                                        ...provided.draggableProps.style
+                                                    }}
+                                                >
+                                                    <Grid>
+                                                        <Grid.Col span={{base: 12, md: 4}}>
+                                                            <Group mb="md">
+                                                                <div {...provided.dragHandleProps}>
+                                                                    <IconGripVertical size={24} style={{ cursor: 'grab' }} />
+                                                                </div>
+                                                                <Checkbox
+                                                                    label="Active"
+                                                                    checked={image.isActive}
+                                                                    onChange={() => handleToggleActive(index)}
+                                                                />
+                                                                <ActionIcon
+                                                                    color="red"
+                                                                    variant="subtle"
+                                                                    onClick={() => handleDeleteImage(index)}
+                                                                >
+                                                                    <IconTrash size={16} />
+                                                                </ActionIcon>
+                                                            </Group>
+                                                            {image.file.type.startsWith('video/') ? (
+                                                                <video
+                                                                    src={image.preview}
+                                                                    controls
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        height: '200px',
+                                                                        objectFit: 'contain'
+                                                                    }}
+                                                                />
+                                                            ) : (
+                                                                <img
+                                                                    src={image.preview}
+                                                                    alt={`Preview ${index + 1}`}
+                                                                    style={{
+                                                                        width: '100%',
+                                                                        height: '200px',
+                                                                        objectFit: 'contain'
+                                                                    }}
+                                                                />
+                                                            )}
+                                                            {typeof image.uploadProgress === 'number' && (
+                                                                <Progress
+                                                                    value={image.uploadProgress}
+                                                                    mt="md"
+                                                                    color={image.uploadProgress === 100 ? 'green' : 'blue'}
+                                                                />
+                                                            )}
+                                                        </Grid.Col>
+                                                        <Grid.Col span={{base: 12, md: 8}}>
+                                                            <Stack>
+                                                                {selectedTemplate && JSON.parse(selectedTemplate.fields).map((field: TemplateField) =>
+                                                                    renderMetadataField(field, index)
+                                                                )}
+                                                            </Stack>
+                                                        </Grid.Col>
+                                                    </Grid>
+                                                </div>
+                                            )}
+                                        </Draggable>
+                                    ))}
+                                    {provided.placeholder}
+                                </div>
+                            )}
+                        </Droppable>
+                    </DragDropContext>
 
                     <Group justify="center" mt="xl">
                         <Button
