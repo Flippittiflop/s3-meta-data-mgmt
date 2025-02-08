@@ -56,7 +56,9 @@ export default function Images() {
           s3Key: image.s3Key || '',
           s3Url: image.s3Url || '',
           categoryId: image.categoryId || '',
-          metadata: image.metadata || '{}'
+          metadata: image.metadata || '{}',
+          isActive: image.isActive ?? true, // Use nullish coalescing to default to true
+          sequence: image.sequence ?? 0 // Use nullish coalescing to default to 0
         }))
       }));
     } catch (error) {

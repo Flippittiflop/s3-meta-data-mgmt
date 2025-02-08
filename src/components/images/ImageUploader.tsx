@@ -132,7 +132,7 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                     const key = `media-files/${category.name.toLowerCase()}/${Date.now()}-${img.file.name}`;
 
                     // Convert metadata to S3-compatible format and add isActive and sequence
-                    const s3Metadata: Record<string, string> = {
+                    const s3Metadata = {
                         'is-active': String(img.isActive),
                         'sequence': String(img.sequence),
                         ...Object.entries(img.metadata || {}).reduce((acc, [key, value]) => {
@@ -157,6 +157,7 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                             },
                         });
 
+                        // Create image record in DynamoDB
                         await client.models.Image.create({
                             s3Key: key,
                             s3Url: key,
