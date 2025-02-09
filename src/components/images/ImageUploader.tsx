@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Button, Select, Stack, Text, Grid, TextInput, NumberInput, Group, Progress, Checkbox, ActionIcon } from '@mantine/core';
+import { Button, Select, Stack, Text, Grid, TextInput, NumberInput, Group, Progress, Checkbox, ActionIcon, Modal } from '@mantine/core';
 import { Dropzone } from '@mantine/dropzone';
-import { IconUpload, IconPhoto, IconX, IconTrash, IconGripVertical } from '@tabler/icons-react';
+import { IconUpload, IconPhoto, IconX, IconTrash, IconGripVertical, IconRobot } from '@tabler/icons-react';
 import { generateClient } from 'aws-amplify/data';
 import { uploadData } from 'aws-amplify/storage';
 import { notifications } from '@mantine/notifications';
 import { DragDropContext, Droppable, Draggable } from '@hello-pangea/dnd';
+import { initializeOpenAI, analyzeImage } from '../../lib/openai';
 import type { Schema } from '../../../amplify/data/resource';
 import type { Category, Template, TemplateField } from '../../types';
 
@@ -31,6 +32,9 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
     const [uploadedImages, setUploadedImages] = useState<UploadedImage[]>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
     const [isUploading, setIsUploading] = useState(false);
+    const [openAIKey, setOpenAIKey] = useState('');
+    const [showAPIKeyModal, setShowAPIKeyModal] = useState(false);
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
 
     const handleCategoryChange = (categoryId: string | null) => {
         setSelectedCategory(categoryId);
@@ -46,9 +50,7 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
     const handleDrop = (files: File[]) => {
         const newImages = files.map((file, index) => ({
             file,
-            preview: file.type.startsWith('video/')
-                ? URL.createObjectURL(file)
-                : URL.createObjectURL(file),
+            preview: URL.createObjectURL(file),
             metadata: {},
             isActive: true,
             sequence: uploadedImages.length + index
@@ -117,6 +119,92 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
             };
             return updated;
         });
+    };
+
+    const analyzeImages = async () => {
+        if (!openAIKey) {
+            setShowAPIKeyModal(true);
+            return;
+        }
+
+        if (!selectedTemplate) {
+            notifications.show({
+                title: 'Error',
+                message: 'Please select a category with a template first',
+                color: 'red',
+            });
+            return;
+        }
+
+        setIsAnalyzing(true);
+        try {
+            // Initialize OpenAI only once at the start
+            initializeOpenAI(openAIKey);
+
+            const templateFields = JSON.parse(selectedTemplate.fields);
+            const updatedImages = [...uploadedImages];
+            let hasError = false;
+
+            // Process one image at a time to avoid rate limits
+            for (let i = 0; i < updatedImages.length; i++) {
+                const image = updatedImages[i];
+                if (!image.file.type.startsWith('image/')) {
+                    continue; // Skip non-image files
+                }
+
+                try {
+                    const metadata = await analyzeImage(
+                        image.file,
+                        templateFields.map((field: TemplateField) => ({
+                            name: field.name,
+                            type: field.type
+                        }))
+                    );
+
+                    updatedImages[i] = {
+                        ...image,
+                        metadata: {
+                            ...image.metadata,
+                            ...metadata
+                        }
+                    };
+
+                    // Update the state after each successful analysis
+                    setUploadedImages(prev => {
+                        const updated = [...prev];
+                        updated[i] = updatedImages[i];
+                        return updated;
+                    });
+
+                } catch (error) {
+                    hasError = true;
+                    console.error('Error analyzing image:', error);
+                    notifications.show({
+                        title: 'Error',
+                        message: `Failed to analyze image ${i + 1}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+                        color: 'red',
+                    });
+                    // Continue with next image even if this one failed
+                }
+            }
+
+            if (!hasError) {
+                notifications.show({
+                    title: 'Success',
+                    message: 'Images analyzed successfully',
+                    color: 'green',
+                });
+            }
+        } catch (error) {
+            console.error('Error in analyzeImages:', error);
+            notifications.show({
+                title: 'Error',
+                message: error instanceof Error ? error.message : 'Failed to analyze images',
+                color: 'red',
+            });
+        } finally {
+            setIsAnalyzing(false);
+        }
     };
 
     const handleSave = async () => {
@@ -278,7 +366,7 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                                 'image/*': [], // Accept all image types
                                 'video/mp4': ['.mp4'] // Accept MP4 videos
                             }}
-                            maxSize={100 * 1024 ** 2} // Increased to 100MB to accommodate videos
+                            maxSize={100 * 1024 ** 2}
                             disabled={isUploading}
                         >
                             <Stack align="center" gap="xs" style={{ minHeight: 120, justifyContent: 'center' }}>
@@ -299,6 +387,19 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                     )}
                 </Stack>
             </div>
+
+            {uploadedImages.length > 0 && selectedTemplate && (
+                <Group mb="xl">
+                    <Button
+                        leftSection={<IconRobot size={14} />}
+                        variant="light"
+                        onClick={analyzeImages}
+                        loading={isAnalyzing}
+                    >
+                        Analyze Images with AI
+                    </Button>
+                </Group>
+            )}
 
             {uploadedImages.length > 0 && (
                 <>
@@ -399,6 +500,38 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                     </Group>
                 </>
             )}
+
+            <Modal
+                opened={showAPIKeyModal}
+                onClose={() => setShowAPIKeyModal(false)}
+                title="OpenAI API Key Required"
+            >
+                <Stack>
+                    <Text size="sm">
+                        To analyze images with AI, please enter your OpenAI API key.
+                        The key will only be stored in memory and used for this session.
+                    </Text>
+                    <TextInput
+                        label="OpenAI API Key"
+                        placeholder="sk-..."
+                        value={openAIKey}
+                        onChange={(e) => setOpenAIKey(e.currentTarget.value)}
+                        required
+                    />
+                    <Button
+                        onClick={() => {
+                            if (openAIKey) {
+                                setShowAPIKeyModal(false);
+                                // Don't call analyzeImages here - it will be called automatically
+                                // when the modal closes because the button is still enabled
+                            }
+                        }}
+                        disabled={!openAIKey}
+                    >
+                        Save and Continue
+                    </Button>
+                </Stack>
+            </Modal>
         </div>
     );
 }
