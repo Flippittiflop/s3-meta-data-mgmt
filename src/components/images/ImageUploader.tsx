@@ -219,24 +219,13 @@ export default function ImageUploader({ categories, templates, onUploadComplete 
                 uploadedImages.map(async (img, index) => {
                     const key = `media-files/${category.name.toLowerCase()}/${Date.now()}-${img.file.name}`;
 
-                    // Convert metadata to S3-compatible format and add isActive and sequence
-                    const s3Metadata = {
-                        'is-active': String(img.isActive),
-                        'sequence': String(img.sequence),
-                        ...Object.entries(img.metadata || {}).reduce((acc, [key, value]) => {
-                            const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
-                            acc[sanitizedKey] = String(value || '');
-                            return acc;
-                        }, {} as Record<string, string>)
-                    };
-
                     try {
+                        // Upload file to S3 without metadata
                         await uploadData({
                             path: key,
                             data: img.file,
                             options: {
                                 bucket: 's3MetaDataManagement',
-                                metadata: s3Metadata,
                                 onProgress: ({ transferredBytes, totalBytes }) => {
                                     if (!totalBytes) return;
                                     const progress = (transferredBytes / totalBytes) * 100;

@@ -1,7 +1,7 @@
 import { Title, Button, SimpleGrid, Card, Stack, Text, Group, Modal, TextInput, NumberInput, Select, Checkbox } from '@mantine/core';
 import { IconDownload, IconEdit, IconTrash, IconGripVertical, IconDeviceFloppy } from '@tabler/icons-react';
 import { StorageImage } from '@aws-amplify/ui-react-storage';
-import { getUrl, remove, uploadData } from 'aws-amplify/storage';
+import { getUrl, remove } from 'aws-amplify/storage';
 import { generateClient } from 'aws-amplify/data';
 import { notifications } from '@mantine/notifications';
 import { useState, useEffect } from 'react';
@@ -91,46 +91,10 @@ export default function CategoryView({ category, template, images: initialImages
         try {
             // Update all images in DynamoDB
             await Promise.all(images.map(async (image) => {
-                // Update DynamoDB
                 await client.models.Image.update({
                     id: image.id,
                     isActive: image.isActive,
                     sequence: image.sequence,
-                });
-
-                // Get current file from S3
-                const result = await getUrl({
-                    path: image.s3Key,
-                    options: {
-                        bucket: 's3MetaDataManagement',
-                        validateObjectExistence: true,
-                    }
-                });
-
-                if (!result.url) return;
-
-                const response = await fetch(result.url.toString());
-                const blob = await response.blob();
-
-                // Update S3 metadata
-                const s3Metadata = {
-                    'is-active': String(image.isActive),
-                    'sequence': String(image.sequence),
-                    ...Object.entries(JSON.parse(image.metadata)).reduce((acc, [key, value]) => {
-                        const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
-                        acc[sanitizedKey] = String(value || '');
-                        return acc;
-                    }, {} as Record<string, string>)
-                };
-
-                await uploadData({
-                    path: image.s3Key,
-                    data: blob,
-                    options: {
-                        bucket: 's3MetaDataManagement',
-                        metadata: s3Metadata,
-                        contentType: blob.type,
-                    }
                 });
             }));
 
@@ -230,43 +194,6 @@ export default function CategoryView({ category, template, images: initialImages
         if (!editingImage) return;
 
         try {
-            // Get the current file
-            const result = await getUrl({
-                path: editingImage.s3Key,
-                options: {
-                    bucket: 's3MetaDataManagement',
-                    validateObjectExistence: true,
-                }
-            });
-
-            if (!result.url) {
-                throw new Error('Could not get file URL');
-            }
-
-            // Fetch the file content
-            const response = await fetch(result.url.toString());
-            const blob = await response.blob();
-
-            // Convert metadata to S3-compatible format
-            const s3Metadata: Record<string, string> = {};
-            Object.entries(editedMetadata).forEach(([key, value]) => {
-                // S3 metadata keys must be lowercase
-                const sanitizedKey = key.toLowerCase().replace(/[^a-z0-9]/g, '-');
-                // Convert all values to strings
-                s3Metadata[sanitizedKey] = String(value || '');
-            });
-
-            // Upload the file with new metadata
-            await uploadData({
-                path: editingImage.s3Key,
-                data: blob,
-                options: {
-                    bucket: 's3MetaDataManagement',
-                    metadata: s3Metadata,
-                    contentType: blob.type,
-                }
-            });
-
             // Update DynamoDB
             await client.models.Image.update({
                 id: editingImage.id,
